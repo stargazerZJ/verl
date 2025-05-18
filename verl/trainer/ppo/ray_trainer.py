@@ -924,16 +924,27 @@ class RayPPOTrainer:
                         finished_mask = batch.pop(non_tensor_batch_keys=["finished"])
                         finished_mask = np.logical_or(batch.non_tensor_batch["age"] == max_age, finished_mask)
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
-                        
+
                         partial_batch.non_tensor_batch["age"] += 1
                         # to concatenate the responses in partial batch back to prompts
 
                         # to be changed to merge by uid, and preserve keys
-                        staged_batch = DataProto.concat([staged_out, staged_batch]) 
+                        staged_batch = DataProto.concat([staged_out, staged_batch])
 
-                        # to be changed to whether prompts whose number of rollout is enough
-                        # while filtering, ensure sample number not larger than self.config.data.train_batch_size
+                        # prompts whose number of finished rollout is enough can be trained on
+                        # while filtering, we ensure sample number not larger than self.config.data.train_batch_size
                         can_train_mask = np.zeros(len(staged_out.batch), dtype=bool)
+                        id2count = defaultdict(int)
+                        can_train_count = 0
+                        max_train_samples = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
+                        for uid in staged_batch.non_tensor_batch["uid"]:
+                            id2count[uid] += 1
+                        for i, uid in enumerate(staged_batch.non_tensor_batch["uid"]):
+                            if id2count[uid] == self.config.actor_rollout_ref.rollout.n:
+                                can_train_mask[i] = True
+                                can_train_count += 1
+                            if can_train_count >= max_train_samples:
+                                break
 
                         can_train_count = np.sum(can_train_mask)
                         if can_train_count < self.config.data.train_batch_size:
