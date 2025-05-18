@@ -928,7 +928,7 @@ class RayPPOTrainer:
                         partial_batch.non_tensor_batch["age"] += 1
                         # to concatenate the responses in partial batch back to prompts
 
-                        # to be changed to merge by uid, and preserve keys
+                        # note that we no longer ensure the order of samples in staged_batch
                         staged_batch = DataProto.concat([staged_out, staged_batch])
 
                         # prompts whose number of finished rollout is enough can be trained on
