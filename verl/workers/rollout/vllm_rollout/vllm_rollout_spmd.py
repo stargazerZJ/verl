@@ -36,7 +36,7 @@ import torch
 import torch.distributed
 from omegaconf import DictConfig
 from tensordict import TensorDict
-from vllm import LLM, SamplingParams
+from vllm import LLM, SamplingParams, CompletionOutput
 from vllm.distributed import parallel_state as vllm_ps
 from vllm.worker.worker_base import WorkerWrapperBase
 
@@ -267,9 +267,12 @@ class vLLMRollout(BaseRollout):
             # if n = 1: (bs, response_length) ; if n > 1: (bs * n, response_length)
 
             response = []
+            finished = []
             for output in outputs:
                 for sample_id in range(len(output.outputs)):
-                    response.append(output.outputs[sample_id].token_ids)
+                    completion : CompletionOutput = output.outputs[sample_id]
+                    response.append(completion.token_ids)
+                    finished.append(completion.finished())
 
             response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
 

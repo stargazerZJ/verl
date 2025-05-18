@@ -879,11 +879,23 @@ class RayPPOTrainer:
         self.global_steps += 1
         last_val_metrics = None
 
+        partial_batch = DataProto() # samples whose rollout is not finished yet
+        staged_batch = DataProto()  # samples whose rollout has been finished but not yet trained on
+        max_age = 2                 # max rounds of rollout before the prompt is forced finished
+
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
+
+                batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
+                                                         dtype=object)
+                # repeat to align with repeated responses in rollout
+                batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
+                batch.non_tensor_batch["age"] = np.ones(len(batch.batch), dtype=int)
+
+                batch = DataProto.concat([batch, partial_batch])
 
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
@@ -898,8 +910,6 @@ class RayPPOTrainer:
                     batch_keys=batch_keys_to_pop,
                     non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
                 )
-                # repeat the gen batch here instead of during rollout
-                gen_batch = gen_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
 
                 is_last_step = self.global_steps >= self.total_training_steps
 
@@ -908,11 +918,31 @@ class RayPPOTrainer:
                     with _timer("gen", timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
 
-                    batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object)
-                    # repeat to align with repeated responses in rollout
-                    batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
-                    batch = batch.union(gen_batch_output)
+                    with _timer("filter", timing_raw):
+                        batch = batch.union(gen_batch_output)
 
+                        finished_mask = np.zeros(len(batch.batch), dtype=bool)  # to be changed to whether rollout is finished
+                        finished_mask = np.logical_or(batch.non_tensor_batch["age"] == max_age, finished_mask)
+                        staged_out, partial_batch = DataProto.split(batch, finished_mask)
+                        
+                        partial_batch.non_tensor_batch["age"] += 1
+                        # to concatenate the responses in partial batch back to prompts
+
+                        # to be changed to merge by uid, and preserve keys
+                        staged_batch = DataProto.concat([staged_out, staged_batch]) 
+
+                        # to be changed to whether prompts whose number of rollout is enough
+                        # while filtering, ensure sample number not larger than self.config.data.train_batch_size
+                        can_train_mask = np.zeros(len(staged_out.batch), dtype=bool)
+
+                        can_train_count = np.sum(can_train_mask)
+                        if can_train_count < self.config.data.train_batch_size:
+                            print(f"{can_train_count=}. Keep generating...")
+                            continue
+
+                        batch, staged_batch = DataProto.split(staged_batch, can_train_mask)
+
+                    # to be changed to computing the correct response mask
                     batch.batch["response_mask"] = compute_response_mask(batch)
                     # balance the number of valid tokens on each dp rank.
                     # Note that this breaks the order of data inside the batch.
