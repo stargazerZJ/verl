@@ -152,9 +152,6 @@ class vLLMRollout(BaseRollout):
             if hasattr(SamplingParams(), str(k)):
                 kwargs[k] = config.get(k)
 
-        # repeating is done by ray trainer
-        kwargs["n"] = 1
-
         print(f"kwargs: {kwargs}")
         self.sampling_params = SamplingParams(**kwargs)
 
