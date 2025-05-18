@@ -921,7 +921,7 @@ class RayPPOTrainer:
                     with _timer("filter", timing_raw):
                         batch = batch.union(gen_batch_output)
 
-                        finished_mask = np.zeros(len(batch.batch), dtype=bool)  # to be changed to whether rollout is finished
+                        finished_mask = batch.pop(non_tensor_batch_keys=["finished"])
                         finished_mask = np.logical_or(batch.non_tensor_batch["age"] == max_age, finished_mask)
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
                         

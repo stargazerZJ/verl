@@ -273,6 +273,7 @@ class vLLMRollout(BaseRollout):
                     completion : CompletionOutput = output.outputs[sample_id]
                     response.append(completion.token_ids)
                     finished.append(completion.finished())
+            non_tensor_batch["finished"] = np.array(finished)
 
             response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
 
