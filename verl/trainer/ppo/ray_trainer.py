@@ -946,7 +946,6 @@ class RayPPOTrainer:
                             if can_train_count >= max_train_samples:
                                 break
 
-                        can_train_count = np.sum(can_train_mask)
                         if can_train_count < self.config.data.train_batch_size:
                             print(f"{can_train_count=}. Keep generating...")
                             continue
