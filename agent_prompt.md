@@ -1,0 +1,3 @@
+我们提出了对verl训练架构的改进，即每轮训练保存未生成完的（由于在grpo中每次会对同一个prompt生成8次，都生成完了才算完成），在主训练循环中每次将上一轮没生成好的和这一轮的一起rollout,在通过一个检测是否生成玩的filter处理，现在我们还需要实现一下目标：
+1. 对上一轮没生成完的处理，将response放入prompt中，注意维护正确的padding,以及保存初始prompt长度以便后面训练生成正确的attention mask,
+2. 对于多轮rollout完的batch正确构造attention mask以便训练

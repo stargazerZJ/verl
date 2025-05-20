@@ -181,6 +181,76 @@ def compute_response_mask(data: DataProto):
     attention_mask = data.batch["attention_mask"]
     return attention_mask[:, -response_length:]
 
+# 处理要训练的batch，确保多轮生成的样本结构正确
+def process_multi_round_generation(batch: DataProto):
+    """处理多轮生成的batch，包括正确分离prompt和response"""
+    
+    # 检查是否有多轮生成的记录
+    if "original_prompt_length" not in batch.non_tensor_batch:
+        return batch
+    
+    # 获取responses
+    responses = batch.batch["responses"]
+    response_length = responses.size(1)
+    
+    # 检查是否有需要处理的多轮生成样本
+    has_multi_round = False
+    for i in range(len(batch.batch)):
+        if i < len(batch.non_tensor_batch["original_prompt_length"]):
+            orig_len = batch.non_tensor_batch["original_prompt_length"][i]
+            if orig_len > 0:
+                has_multi_round = True
+                break
+            
+    if not has_multi_round:
+        return batch
+        
+    # 创建新的batch
+    from copy import deepcopy
+    new_batch = deepcopy(batch)
+    
+    # 遍历所有样本，处理多轮生成的情况
+    for i in range(len(batch.batch)):
+        if i >= len(batch.non_tensor_batch["original_prompt_length"]):
+            continue
+            
+        orig_len = batch.non_tensor_batch["original_prompt_length"][i]
+        if orig_len > 0:  # 这是一个多轮生成的样本
+            # 获取当前完整的input_ids和attention_mask
+            full_input_ids = batch.batch["input_ids"][i]
+            full_attention_mask = batch.batch["attention_mask"][i]
+            
+            # 计算完整的序列长度
+            seq_len = full_input_ids.size(0)
+            
+            # 如果原始prompt长度小于整个序列长度，说明input_ids中包含了之前的responses
+            if orig_len < seq_len:
+                # 从原始的prompts中保留原始长度的部分
+                new_prompt_ids = full_input_ids[:orig_len]
+                # 将剩余部分（之前生成的responses）移到new_responses中
+                extra_response = full_input_ids[orig_len:]
+                
+                # 新的responses是之前的响应和当前的响应的组合
+                if len(extra_response) > 0:  # 确保有额外的响应部分
+                    new_responses = torch.cat([extra_response, responses[i]])
+                else:
+                    new_responses = responses[i]
+                
+                # 更新batch
+                new_batch.batch["input_ids"][i] = new_prompt_ids
+                new_batch.batch["responses"][i] = new_responses
+                
+                # 同样更新attention_mask
+                new_prompt_mask = full_attention_mask[:orig_len]
+                if len(extra_response) > 0:
+                    extra_response_mask = full_attention_mask[orig_len:]
+                    new_response_mask = torch.cat([extra_response_mask, torch.ones_like(responses[i])])
+                else:
+                    new_response_mask = torch.ones_like(responses[i])
+                
+                new_batch.batch["attention_mask"][i] = new_prompt_mask
+    
+    return new_batch
 
 def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True):
     # Back-compatible with trainers that do not compute response mask in fit
@@ -891,6 +961,12 @@ class RayPPOTrainer:
 
                 batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
                                                          dtype=object)
+                # 记录原始prompt长度，使用实际的input_ids长度
+                batch.non_tensor_batch["original_prompt_length"] = np.array(
+                    [batch.batch["input_ids"][i].shape[0] for i in range(len(batch.batch))], 
+                    dtype=np.int32
+                )
+                
                 # repeat to align with repeated responses in rollout
                 batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                 batch.non_tensor_batch["age"] = np.ones(len(batch.batch), dtype=int)
@@ -898,7 +974,7 @@ class RayPPOTrainer:
                 batch = DataProto.concat([batch, partial_batch])
 
                 # pop those keys for generation
-                batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
+                batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids", "original_prompt_length"]
                 non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
                 if "multi_modal_inputs" in batch.non_tensor_batch:
                     non_tensor_batch_keys_to_pop.extend(["multi_modal_data", "multi_modal_inputs"])
@@ -926,14 +1002,60 @@ class RayPPOTrainer:
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
 
                         partial_batch.non_tensor_batch["age"] += 1
-                        # to concatenate the responses in partial batch back to prompts
+
+                        # 处理partial_batch，将responses拼接到prompt用于下一轮生成
+                        if len(partial_batch) > 0 and "responses" in partial_batch.batch:
+                            # 获取原始input_ids和已生成的responses
+                            input_ids = partial_batch.batch["input_ids"]
+                            responses = partial_batch.batch["responses"]
+                            attention_mask = partial_batch.batch["attention_mask"]
+                            position_ids = partial_batch.batch["position_ids"]
+                            
+                            # 记录原始prompt长度，如果之前没有记录过
+                            if "original_prompt_length" not in partial_batch.non_tensor_batch:
+                                # 记录原始prompt长度
+                                partial_batch.non_tensor_batch["original_prompt_length"] = np.array(
+                                    [input_ids.shape[1]] * len(partial_batch.batch), 
+                                    dtype=np.int32
+                                )
+                            
+                            # 创建新的input_ids，将responses拼接到原始prompt后
+                            new_input_ids = torch.cat([input_ids, responses], dim=1)
+                            
+                            # 更新attention_mask
+                            response_attention_mask = torch.ones_like(responses, dtype=attention_mask.dtype, device=attention_mask.device)
+                            new_attention_mask = torch.cat([attention_mask, response_attention_mask], dim=1)
+                            
+                            # 更新position_ids
+                            last_pos = position_ids[:, -1:].clone() 
+                            response_length = responses.size(1)
+                            delta_pos = torch.arange(1, response_length + 1, device=position_ids.device)
+                            delta_pos = delta_pos.unsqueeze(0).expand(len(partial_batch.batch), -1)
+                            
+                            # 处理特殊情况如qwen2vl mrope
+                            if position_ids.dim() == 3:  
+                                delta_pos = delta_pos.unsqueeze(1).expand(len(partial_batch.batch), position_ids.size(1), -1)
+                                new_pos_ids = last_pos + delta_pos
+                            else:
+                                new_pos_ids = last_pos + delta_pos
+                            
+                            new_position_ids = torch.cat([position_ids, new_pos_ids], dim=1)
+                            
+                            # 更新partial_batch
+                            partial_batch.batch["input_ids"] = new_input_ids
+                            partial_batch.batch["attention_mask"] = new_attention_mask
+                            partial_batch.batch["position_ids"] = new_position_ids
+                            
+                            # 删除已经拼接到input_ids中的responses
+                            if "responses" in partial_batch.batch:
+                                partial_batch.batch.pop("responses")
 
                         # note that we no longer ensure the order of samples in staged_batch
                         staged_batch = DataProto.concat([staged_out, staged_batch])
 
                         # prompts whose number of finished rollout is enough can be trained on
                         # while filtering, we ensure sample number not larger than self.config.data.train_batch_size
-                        can_train_mask = np.zeros(len(staged_out.batch), dtype=bool)
+                        can_train_mask = np.zeros(len(staged_batch.batch), dtype=bool)
                         id2count = defaultdict(int)
                         can_train_count = 0
                         max_train_samples = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
@@ -953,6 +1075,10 @@ class RayPPOTrainer:
                         batch, staged_batch = DataProto.split(staged_batch, can_train_mask)
 
                     # to be changed to computing the correct response mask
+                    # 应用process_multi_round_generation处理batch
+                    batch = process_multi_round_generation(batch)
+
+                    # 计算response_mask
                     batch.batch["response_mask"] = compute_response_mask(batch)
                     # balance the number of valid tokens on each dp rank.
                     # Note that this breaks the order of data inside the batch.
