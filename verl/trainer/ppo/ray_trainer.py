@@ -181,24 +181,23 @@ def compute_response_mask(data: DataProto):
     attention_mask = data.batch["attention_mask"]
     return attention_mask[:, -response_length:]
 
-# 处理要训练的batch，确保多轮生成的样本结构正确
 def process_multi_round_generation(batch: DataProto):
-    """处理多轮生成的batch，包括正确分离prompt和response"""
+    """处理多轮生成的batch，包括正确分离prompt和response
     
-    # 检查是否有多轮生成的记录
-    if "original_prompt_length" not in batch.non_tensor_batch:
-        return batch
+    使用age值确定在prompt中包含的原始response数量
+    age>1表示这个样本已经经过了多轮生成
+    """
     
     # 获取responses
     responses = batch.batch["responses"]
     response_length = responses.size(1)
     
-    # 检查是否有需要处理的多轮生成样本
+    # 检查是否有多轮生成的样本(age>1)
     has_multi_round = False
     for i in range(len(batch.batch)):
-        if i < len(batch.non_tensor_batch["original_prompt_length"]):
-            orig_len = batch.non_tensor_batch["original_prompt_length"][i]
-            if orig_len > 0:
+        if i < len(batch.non_tensor_batch["age"]):
+            age = batch.non_tensor_batch["age"][i]
+            if age > 1:  # 表示经过了多轮生成
                 has_multi_round = True
                 break
             
@@ -209,46 +208,101 @@ def process_multi_round_generation(batch: DataProto):
     from copy import deepcopy
     new_batch = deepcopy(batch)
     
+    # 获取标准长度，用于对齐
+    standard_prompt_length = max([batch.batch["input_ids"][i].shape[0] for i in range(len(batch.batch))])
+    standard_response_length = responses.shape[1]
+    
     # 遍历所有样本，处理多轮生成的情况
     for i in range(len(batch.batch)):
-        if i >= len(batch.non_tensor_batch["original_prompt_length"]):
+        if i >= len(batch.non_tensor_batch["age"]):
             continue
             
-        orig_len = batch.non_tensor_batch["original_prompt_length"][i]
-        if orig_len > 0:  # 这是一个多轮生成的样本
+        age = batch.non_tensor_batch["age"][i]
+        if age > 1:  # 这是一个多轮生成的样本
             # 获取当前完整的input_ids和attention_mask
             full_input_ids = batch.batch["input_ids"][i]
             full_attention_mask = batch.batch["attention_mask"][i]
             
-            # 计算完整的序列长度
-            seq_len = full_input_ids.size(0)
+            # 计算之前轮次生成的response长度
+            prev_response_tokens = (age - 1) * response_length
             
-            # 如果原始prompt长度小于整个序列长度，说明input_ids中包含了之前的responses
-            if orig_len < seq_len:
-                # 从原始的prompts中保留原始长度的部分
-                new_prompt_ids = full_input_ids[:orig_len]
-                # 将剩余部分（之前生成的responses）移到new_responses中
-                extra_response = full_input_ids[orig_len:]
-                
-                # 新的responses是之前的响应和当前的响应的组合
-                if len(extra_response) > 0:  # 确保有额外的响应部分
-                    new_responses = torch.cat([extra_response, responses[i]])
-                else:
-                    new_responses = responses[i]
-                
-                # 更新batch
-                new_batch.batch["input_ids"][i] = new_prompt_ids
-                new_batch.batch["responses"][i] = new_responses
-                
-                # 同样更新attention_mask
-                new_prompt_mask = full_attention_mask[:orig_len]
-                if len(extra_response) > 0:
-                    extra_response_mask = full_attention_mask[orig_len:]
-                    new_response_mask = torch.cat([extra_response_mask, torch.ones_like(responses[i])])
-                else:
-                    new_response_mask = torch.ones_like(responses[i])
-                
-                new_batch.batch["attention_mask"][i] = new_prompt_mask
+            # 修正：正确计算原始prompt的结束位置
+            # 原始prompt结束位置 = 总长度 - 之前轮次生成的response长度
+            prompt_end = len(full_input_ids) - prev_response_tokens
+            
+            # 获取非填充部分的起始位置
+            non_padding_start = 0
+            for j in range(len(full_attention_mask)):
+                if full_attention_mask[j] == 1:
+                    non_padding_start = j
+                    break
+            
+            # 将input_ids分为prompt部分和之前的response部分
+            if(non_padding_start > prompt_end):
+                print(f"Warning: Sample {i} has empty original_prompt. Using first token as prompt.")
+
+            original_prompt = full_input_ids[non_padding_start:prompt_end]
+            previous_responses = full_input_ids[prompt_end:]
+            
+            
+            # 新的responses是之前的响应和当前的响应的组合
+            if len(previous_responses) > 0:  # 确保有之前的响应部分
+                new_responses = torch.cat([previous_responses, responses[i]])
+            else:
+                new_responses = responses[i]
+            
+            # 处理对齐
+            # prompt是右对齐的（左侧填充）
+            padded_prompt = torch.full((standard_prompt_length,), 
+                                       batch.batch["input_ids"].new_zeros(1)[0], 
+                                       dtype=batch.batch["input_ids"].dtype, 
+                                       device=batch.batch["input_ids"].device)
+            
+            prompt_start = standard_prompt_length - len(original_prompt)
+            if(prompt_start < 0):
+                print(f"Warning: Sample {i} has empty original_prompt. Using first token as prompt.")
+                prompt_start = 0
+            padded_prompt[prompt_start:] = original_prompt
+            
+            # response是左对齐的
+            # 如果new_responses长度超过标准长度，则截断
+            if len(new_responses) > standard_response_length:
+                print(f"Warning: Sample {i} has too long response. Truncating to {standard_response_length}.")
+                new_responses = new_responses[:standard_response_length]
+            # 填充response部分
+            response_padding_length = standard_response_length - len(new_responses)
+            new_responses = torch.cat([new_responses, torch.full((response_padding_length,),
+                                                                    batch.batch["responses"].new_zeros(1)[0], 
+                                                                    dtype=batch.batch["responses"].dtype, 
+                                                                    device=batch.batch["responses"].device)])
+            
+
+            # 创建新的attention_mask, 大小为 standard_prompt_length + standard_response_length, 填充为0
+            new_full_mask = torch.full((standard_prompt_length + standard_response_length,),
+                                        batch.batch["attention_mask"].new_zeros(1)[0], 
+                                        dtype=batch.batch["attention_mask"].dtype, 
+                                        device=batch.batch["attention_mask"].device)
+            new_full_mask[prompt_start:-response_padding_length] = 1
+            
+            # 更新batch
+            new_batch.batch["input_ids"][i] = padded_prompt
+            new_batch.batch["responses"][i] = new_responses
+            new_batch.batch["attention_mask"][i] = new_full_mask
+            
+            # 更新position_ids如果存在
+            if "position_ids" in new_batch.batch:
+                # 创建新的position_ids，右对齐
+                new_position_ids = torch.full((standard_prompt_length + standard_response_length,),
+                                        batch.batch["position_ids"].new_zeros(1)[0], 
+                                        dtype=batch.batch["position_ids"].dtype, 
+                                        device=batch.batch["position_ids"].device)
+                # 计算position_ids，保持连续性
+                new_position_ids[prompt_start:] = torch.arange(1, len(original_prompt) + len(new_responses))
+                new_batch.batch["position_ids"][i] = new_position_ids
+    
+    # 移除response_mask，让后续步骤重新计算
+    if "response_mask" in new_batch.batch:
+        new_batch.batch.pop("response_mask")
     
     return new_batch
 
@@ -974,7 +1028,7 @@ class RayPPOTrainer:
                 batch = DataProto.concat([batch, partial_batch])
 
                 # pop those keys for generation
-                batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids", "original_prompt_length"]
+                batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids", "original_prompt_length","age"]
                 non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
                 if "multi_modal_inputs" in batch.non_tensor_batch:
                     non_tensor_batch_keys_to_pop.extend(["multi_modal_data", "multi_modal_inputs"])
@@ -1026,7 +1080,7 @@ class RayPPOTrainer:
                             response_attention_mask = torch.ones_like(responses, dtype=attention_mask.dtype, device=attention_mask.device)
                             new_attention_mask = torch.cat([attention_mask, response_attention_mask], dim=1)
                             
-                            # 更新position_ids
+                            # 更新position_ids，由于是partial_batch，response都是没有finish的可以一起处理
                             last_pos = position_ids[:, -1:].clone() 
                             response_length = responses.size(1)
                             delta_pos = torch.arange(1, response_length + 1, device=position_ids.device)
@@ -1040,6 +1094,17 @@ class RayPPOTrainer:
                                 new_pos_ids = last_pos + delta_pos
                             
                             new_position_ids = torch.cat([position_ids, new_pos_ids], dim=1)
+                            
+                            # 获取标准长度限制 - 通常从config或第一批次的大小获取
+                            # 使用最初batch中的input_ids长度作为标准
+                            standard_length = batch_dict["input_ids"].shape[1]
+                            
+                            # 裁剪超出标准长度的部分
+                            if new_input_ids.shape[1] > standard_length:
+                                # 保留最新的标准长度个token
+                                new_input_ids = new_input_ids[:, -standard_length:]
+                                new_attention_mask = new_attention_mask[:, -standard_length:]
+                                new_position_ids = new_position_ids[:, -standard_length:]
                             
                             # 更新partial_batch
                             partial_batch.batch["input_ids"] = new_input_ids
