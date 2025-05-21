@@ -85,6 +85,8 @@ class vLLMRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
+        self.max_gen_prompt_length = config.get("max_gen_prompt_length", 4096)
+        self.max_gen_response_length = config.get("max_gen_response_length", 512)
         assert not (not config.enforce_eager and config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 
         tensor_parallel_size = self.config.get("tensor_model_parallel_size", 1)
@@ -107,9 +109,9 @@ class vLLMRollout(BaseRollout):
             else:
                 vllm_ps.initialize_model_parallel(tensor_model_parallel_size=tensor_parallel_size)
 
-        assert model_hf_config.max_position_embeddings >= config.prompt_length + config.response_length, "model context length should be greater than total sequence length"
+        assert model_hf_config.max_position_embeddings >= self.max_gen_prompt_length + self.max_gen_response_length, "model context length should be greater than total sequence length"
 
-        max_model_len = int(config.max_model_len or config.prompt_length + config.response_length)
+        max_model_len = int(config.max_model_len or self.max_gen_prompt_length + self.max_gen_response_length)
 
         if max_num_batched_tokens < max_model_len and self.config.enable_chunked_prefill:
             raise ValueError(
@@ -152,7 +154,7 @@ class vLLMRollout(BaseRollout):
         kwargs = dict(
             n=1,
             logprobs=0,  # can be set to 0 and let actor to recompute
-            max_tokens=config.response_length,
+            max_tokens=self.max_gen_response_length,
         )
 
         # # we may detokenize the result all together later

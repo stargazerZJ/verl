@@ -81,6 +81,8 @@ class RLHFDataset(Dataset):
         self.image_key = config.get("image_key", "images")
         self.video_key = config.get("video_key", "videos")
         self.max_prompt_length = config.get("max_prompt_length", 1024)
+        self.max_gen_prompt_length = config.get("max_gen_prompt_length", 4096)
+
         self.return_raw_chat = config.get("return_raw_chat", False)
         self.truncation = config.get("truncation", "error")
         self.filter_overlong_prompts = config.get("filter_overlong_prompts", True)
@@ -202,7 +204,7 @@ class RLHFDataset(Dataset):
         input_ids, attention_mask = verl_F.postprocess_data(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            max_length=self.max_prompt_length,
+            max_length=self.max_gen_prompt_length,# to adapt the multiple-generation prompt
             pad_token_id=self.tokenizer.pad_token_id,
             left_pad=True,
             truncation=self.truncation,

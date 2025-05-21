@@ -181,7 +181,7 @@ def compute_response_mask(data: DataProto):
     attention_mask = data.batch["attention_mask"]
     return attention_mask[:, -response_length:]
 
-def process_multi_round_generation(batch: DataProto):
+def process_multi_round_generation(batch: DataProto, standard_prompt_length: int, standard_response_length: int, tokenizer=None):
     """处理多轮生成的batch，包括正确分离prompt和response
     
     使用age值确定在prompt中包含的原始response数量
@@ -209,8 +209,8 @@ def process_multi_round_generation(batch: DataProto):
     new_batch = deepcopy(batch)
     
     # 获取标准长度，用于对齐
-    standard_prompt_length = max([batch.batch["input_ids"][i].shape[0] for i in range(len(batch.batch))])
-    standard_response_length = responses.shape[1]
+    # standard_prompt_length = max([batch.batch["input_ids"][i].shape[0] for i in range(len(batch.batch))])
+    # standard_response_length = responses.shape[1]
     
     # 遍历所有样本，处理多轮生成的情况
     for i in range(len(batch.batch)):
@@ -254,7 +254,7 @@ def process_multi_round_generation(batch: DataProto):
             # 处理对齐
             # prompt是右对齐的（左侧填充）
             padded_prompt = torch.full((standard_prompt_length,), 
-                                       batch.batch["input_ids"].new_zeros(1)[0], 
+                                       tokenizer.pad_token_id, 
                                        dtype=batch.batch["input_ids"].dtype, 
                                        device=batch.batch["input_ids"].device)
             
@@ -272,7 +272,7 @@ def process_multi_round_generation(batch: DataProto):
             # 填充response部分
             response_padding_length = standard_response_length - len(new_responses)
             new_responses = torch.cat([new_responses, torch.full((response_padding_length,),
-                                                                    batch.batch["responses"].new_zeros(1)[0], 
+                                                                    tokenizer.pad_token_id, 
                                                                     dtype=batch.batch["responses"].dtype, 
                                                                     device=batch.batch["responses"].device)])
             
@@ -412,6 +412,9 @@ class RayPPOTrainer:
         self.tokenizer = tokenizer
         self.processor = processor
         self.config = config
+        self.max_prompt_length = config.get("max_prompt_length", 1024)
+        self.max_response_length = config.get("max_response_length", 1024)
+        self.max_gen_response_length = config.get("max_gen_response_length", 512)
         self.reward_fn = reward_fn
         self.val_reward_fn = val_reward_fn
 
@@ -1141,7 +1144,7 @@ class RayPPOTrainer:
 
                     # to be changed to computing the correct response mask
                     # 应用process_multi_round_generation处理batch
-                    batch = process_multi_round_generation(batch)
+                    batch = process_multi_round_generation(batch,self.max_prompt_length,self.max_response_length,self.tokenizer)
 
                     # 计算response_mask
                     batch.batch["response_mask"] = compute_response_mask(batch)
