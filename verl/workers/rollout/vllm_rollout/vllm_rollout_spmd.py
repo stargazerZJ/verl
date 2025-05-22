@@ -85,7 +85,7 @@ class vLLMRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
-        self.max_gen_prompt_length = config.get("max_gen_prompt_length", 4096)
+        self.max_gen_prompt_length = config.get("max_gen_prompt_length", 2048)
         self.max_gen_response_length = config.get("max_gen_response_length", 512)
         assert not (not config.enforce_eager and config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 

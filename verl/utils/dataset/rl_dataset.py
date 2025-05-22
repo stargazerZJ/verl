@@ -81,7 +81,7 @@ class RLHFDataset(Dataset):
         self.image_key = config.get("image_key", "images")
         self.video_key = config.get("video_key", "videos")
         self.max_prompt_length = config.get("max_prompt_length", 1024)
-        self.max_gen_prompt_length = config.get("max_gen_prompt_length", 4096)
+        self.max_gen_prompt_length = config.get("max_gen_prompt_length", 2048)
 
         self.return_raw_chat = config.get("return_raw_chat", False)
         self.truncation = config.get("truncation", "error")
