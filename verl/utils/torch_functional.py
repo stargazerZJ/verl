@@ -184,12 +184,12 @@ def batch_has_eos(response_id: torch.Tensor, eos_token: Union[int, List[int]] = 
     else:
         eos_tokens = eos_token
 
-    finished = []
+    finished = [] 
     for i in range(response_id.shape[0]):
         seq = response_id[i].cpu().tolist()
         contains_eos = any(token in eos_tokens for token in seq)
         finished.append(contains_eos)
-        
+
     return np.array(finished)
 
 def get_response_mask(response_id: torch.Tensor, eos_token: Union[int, List[int]] = 2, dtype=torch.int64):
