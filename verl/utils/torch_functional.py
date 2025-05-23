@@ -150,7 +150,47 @@ def masked_whiten(values, mask, shift_mean=True):
     if not shift_mean:
         whitened += mean
     return whitened
+import numpy as np
+def batch_has_eos(response_id: torch.Tensor, eos_token: Union[int, List[int]] = 2) -> np.ndarray:
+    """
+    检查每个批次（batch）是否包含EOS标记。
+    
+    参数:
+        response_ids: 形状为 [batch_size, seq_len] 的张量，包含生成的token IDs
+        eos_token: 表示序列结束的token ID，可以是单个整数或整数列表
+        
+    返回:
+        np.ndarray: 形状为 [batch_size] 的布尔数组，表示每个batch是否包含EOS
+    
+    示例:
+        response_ids = torch.tensor([
+            [20, 10, 34, 1, 0, 0, 0],  # 包含EOS (1)
+            [78, 0, 76, 2, 1, 0, 0],   # 包含EOS (2和1)
+            [23, 98, 45, 56, 78, 90, 12],  # 不包含EOS
+            [33, 3, 98, 45, 1, 0, 0]    # 包含EOS (1)
+        ])
+        
+        # 当eos_token=1时
+        batch_has_eos(response_ids, eos_token=1)
+        # 输出: array([ True,  True, False,  True])
+        
+        # 当eos_token=[1,2]时
+        batch_has_eos(response_ids, eos_token=[1,2])
+        # 输出: array([ True,  True, False,  True])
+    """
+    # 确保eos_token是列表格式
+    if isinstance(eos_token, int):
+        eos_tokens = [eos_token]
+    else:
+        eos_tokens = eos_token
 
+    finished = []
+    for i in range(response_id.shape[0]):
+        seq = response_id[i].cpu().tolist()
+        contains_eos = any(token in eos_tokens for token in seq)
+        finished.append(contains_eos)
+        
+    return np.array(finished)
 
 def get_response_mask(response_id: torch.Tensor, eos_token: Union[int, List[int]] = 2, dtype=torch.int64):
     """

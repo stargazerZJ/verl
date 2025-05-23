@@ -43,7 +43,7 @@ from vllm.worker.worker_base import WorkerWrapperBase
 from verl import DataProto
 from verl.third_party.vllm import vllm_version
 from verl.utils.debug import GPUMemoryLogger
-from verl.utils.torch_functional import get_response_mask, pad_2d_list_to_length
+from verl.utils.torch_functional import get_response_mask, batch_has_eos, pad_2d_list_to_length
 from verl.workers.rollout.base import BaseRollout
 
 logger = logging.getLogger(__file__)
@@ -274,10 +274,10 @@ class vLLMRollout(BaseRollout):
                 for sample_id in range(len(output.outputs)):
                     completion : CompletionOutput = output.outputs[sample_id]
                     response.append(completion.token_ids)
-                    finished.append(completion.finished())
-            non_tensor_batch["finished"] = np.array(finished)
+                    # finished.append(completion.finished())
+            # non_tensor_batch["finished"] = np.array(finished)
 
-            response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
+            response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.max_gen_response_length).to(idx.device)
 
             if self.sampling_params.n > 1 and do_sample:
                 idx = _repeat_interleave(idx, self.sampling_params.n)
@@ -305,6 +305,7 @@ class vLLMRollout(BaseRollout):
         response_position_ids = position_ids[..., -1:] + delta_position_id
         position_ids = torch.cat([position_ids, response_position_ids], dim=-1)
         response_attention_mask = get_response_mask(response_id=response, eos_token=eos_token_id, dtype=attention_mask.dtype)
+        non_tensor_batch["finished"] = batch_has_eos(response_id=response, eos_token=eos_token_id)
         attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
 
         # all the tp ranks should contain the same data here. data in all ranks are valid

@@ -1,13 +1,20 @@
 # MODEL_PATH=Qwen/Qwen2.5-Math-1.5B
+export RAY_DEBUG_POST_MORTEM=1
+export HYDRA_FULL_ERROR=1
 MODEL_PATH=Qwen/Qwen3-0.6B-Base
 export WANDB_RUN_NAME=$(git rev-parse HEAD | cut -c1-7)
-PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo --config-path=config \
+ --config-name='multiturn_trainer.yaml'\
  algorithm.adv_estimator=grpo \
  data.train_files=datasets/gsm8k/train.parquet \
  data.val_files=datasets/gsm8k/test.parquet \
  data.train_batch_size=16 \
  data.max_prompt_length=512 \
  data.max_response_length=1024 \
+ +data.max_gen_prompt_length=2048 \
+ +data.max_gen_response_length=128 \
+ +actor_rollout_ref.rollout.max_gen_prompt_length=2048 \
+ +actor_rollout_ref.rollout.max_gen_response_length=128 \
  actor_rollout_ref.model.path=$MODEL_PATH \
  actor_rollout_ref.actor.optim.lr=1e-6 \
  actor_rollout_ref.actor.ppo_mini_batch_size=16 \

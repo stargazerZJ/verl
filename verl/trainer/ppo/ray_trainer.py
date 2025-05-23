@@ -21,6 +21,7 @@ This trainer supports model-agonistic model initialization with huggingface
 import json
 import os
 import uuid
+from tensordict import TensorDict
 from collections import defaultdict
 from contextlib import contextmanager
 from copy import deepcopy
@@ -194,20 +195,27 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
     response_length = responses.size(1) # Should be equal to max_gen_response_length
     
     # Check if there are multi-round samples (age>1)
-    has_multi_round = False
-    for i in range(len(batch.batch)):
-        if i < len(batch.non_tensor_batch["age"]):
-            age = batch.non_tensor_batch["age"][i]
-            if age > 1:  # Indicates it has gone through multiple rounds of generation
-                has_multi_round = True
-                break
+    # has_multi_round = False
+    # for i in range(len(batch.batch)):
+    #     if i < len(batch.non_tensor_batch["age"]):
+    #         age = batch.non_tensor_batch["age"][i]
+    #         if age > 1:  # Indicates it has gone through multiple rounds of generation
+    #             has_multi_round = True
+    #             break
             
-    if not has_multi_round:
-        return batch
+    # if not has_multi_round:
+    #     return batch
         
     # Create new batch
-    from copy import deepcopy
-    new_batch = deepcopy(batch)
+    # from copy import deepcopy
+    # new_batch = deepcopy(batch)
+    new_batch = {
+        "prompts": [],
+        "input_ids": [],
+        "responses": [],
+        "attention_mask": [],
+        "position_ids": [],
+    }
     
     # Get standard lengths for alignment
     # standard_prompt_length = max([batch.batch["input_ids"][i].shape[0] for i in range(len(batch.batch))])
@@ -219,7 +227,7 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
             continue
             
         age = batch.non_tensor_batch["age"][i]
-        if age > 1:  # This is a multi-round generation sample
+        if age > 0:  # This is a multi-round generation sample
             # Get current complete input_ids and attention_mask
             full_input_ids = batch.batch["input_ids"][i]
             full_attention_mask = batch.batch["attention_mask"][i]
@@ -229,7 +237,7 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
             
             # Correction: correctly calculate the end position of the original prompt
             # Original prompt end position = total length - previous rounds' response length
-            prompt_end = len(full_input_ids) - prev_response_tokens
+            prompt_end = len(full_input_ids) - response_length - prev_response_tokens
             
             # Get the starting position of non-padding part
             non_padding_start = 0
@@ -243,7 +251,7 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
                 print(f"Warning: Sample {i} has empty original_prompt. Using first token as prompt.")
 
             original_prompt = full_input_ids[non_padding_start:prompt_end]
-            previous_responses = full_input_ids[prompt_end:]
+            previous_responses = full_input_ids[prompt_end:-response_length]
             
             
             # New responses are the combination of previous responses and current response
@@ -286,26 +294,34 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
             new_full_mask[prompt_start:-response_padding_length] = 1
             
             # Update batch
-            new_batch.batch["input_ids"][i] = padded_prompt
-            new_batch.batch["responses"][i] = new_responses
-            new_batch.batch["attention_mask"][i] = new_full_mask
+            new_batch["prompts"].append(padded_prompt)
+            new_batch["input_ids"].append(torch.concat([padded_prompt, new_responses]))
+            new_batch["responses"].append(new_responses)
+            new_batch["attention_mask"].append(new_full_mask)
             
             # Update position_ids if they exist
-            if "position_ids" in new_batch.batch:
+            if "position_ids" in batch.batch:
                 # Create new position_ids, right-aligned
                 new_position_ids = torch.full((standard_prompt_length + standard_response_length,),
                                         batch.batch["position_ids"].new_zeros(1)[0], 
                                         dtype=batch.batch["position_ids"].dtype, 
                                         device=batch.batch["position_ids"].device)
                 # Calculate position_ids, maintain continuity
-                new_position_ids[prompt_start:] = torch.arange(1, len(original_prompt) + len(new_responses))
-                new_batch.batch["position_ids"][i] = new_position_ids
+                new_position_ids[prompt_start:] = torch.arange(1, len(original_prompt) + len(new_responses)+1)
+                new_batch["position_ids"].append(new_position_ids)
     
-    # Remove response_mask to let subsequent steps recalculate it
-    if "response_mask" in new_batch.batch:
-        new_batch.batch.pop("response_mask")
+    tmp_batch = TensorDict(
+        {
+            "prompts": torch.stack(new_batch["prompts"]),
+            "responses": torch.stack(new_batch["responses"]),
+            "input_ids": torch.stack(new_batch["input_ids"]),
+            "attention_mask": torch.stack(new_batch["attention_mask"]),
+            "position_ids": torch.stack(new_batch["position_ids"]) if "position_ids" in batch.batch else None,
+        },
+        batch_size=len(batch.non_tensor_batch["age"]),
+    )
     
-    return new_batch
+    return DataProto(batch=tmp_batch, non_tensor_batch=batch.non_tensor_batch,meta_info=batch.meta_info)
 
 def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True):
     # Back-compatible with trainers that do not compute response mask in fit
@@ -413,9 +429,9 @@ class RayPPOTrainer:
         self.tokenizer = tokenizer
         self.processor = processor
         self.config = config
-        self.max_prompt_length = config.get("max_prompt_length", 1024)
-        self.max_response_length = config.get("max_response_length", 1024)
-        self.max_gen_response_length = config.get("max_gen_response_length", 512)
+        self.max_prompt_length = config.data.get("max_prompt_length", 1024)
+        self.max_response_length = config.data.get("max_response_length", 1024)
+        self.max_gen_response_length = config.data.get("max_gen_response_length", 512)
         self.reward_fn = reward_fn
         self.val_reward_fn = val_reward_fn
 
@@ -1028,12 +1044,16 @@ class RayPPOTrainer:
                 # repeat to align with repeated responses in rollout
                 batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                 batch.non_tensor_batch["age"] = np.ones(len(batch.batch), dtype=int)
-
-                batch = DataProto.concat([batch, partial_batch])
-
+                batch.non_tensor_batch["finished"] = np.zeros(len(batch.batch), dtype=int)
+                
+                if(len(partial_batch) > 0):
+                    batch = DataProto.concat([batch, partial_batch])
                 # pop those keys for generation
-                batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids", "original_prompt_length","age"]
-                non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
+                batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
+                
+                non_tensor_batch_keys_to_pop = ["raw_prompt_ids","age","finished"]
+                if "original_prompt_length" in batch.non_tensor_batch:
+                    non_tensor_batch_keys_to_pop.append("original_prompt_length")
                 if "multi_modal_inputs" in batch.non_tensor_batch:
                     non_tensor_batch_keys_to_pop.extend(["multi_modal_data", "multi_modal_inputs"])
                 if "raw_prompt" in batch.non_tensor_batch:
@@ -1055,8 +1075,8 @@ class RayPPOTrainer:
                     with _timer("filter", timing_raw):
                         batch = batch.union(gen_batch_output)
 
-                        finished_mask = batch.pop(non_tensor_batch_keys=["finished"])
-                        finished_mask = np.logical_or(batch.non_tensor_batch["age"] == max_age, finished_mask)
+                        # finished_mask = batch.pop(batch_keys=[],non_tensor_batch_keys=["finished"])
+                        finished_mask = np.logical_or(batch.non_tensor_batch["age"] == max_age, batch.non_tensor_batch["finished"])
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
 
                         partial_batch.non_tensor_batch["age"] += 1
@@ -1115,11 +1135,13 @@ class RayPPOTrainer:
                             partial_batch.batch["attention_mask"] = new_attention_mask
                             partial_batch.batch["position_ids"] = new_position_ids
                             
-                            # 删除已经拼接到input_ids中的responses
-                            if "responses" in partial_batch.batch:
-                                partial_batch.batch.pop("responses")
-                            if "response_mask" in partial_batch.batch:
-                                partial_batch.batch.pop("response_mask")
+                        # 删除已经拼接到input_ids中的responses
+                        if "responses" in partial_batch.batch:
+                            partial_batch.batch.pop("responses")
+                        if "prompts" in partial_batch.batch:
+                            partial_batch.batch.pop("prompts")
+                        if "response_mask" in partial_batch.batch:
+                            partial_batch.batch.pop("response_mask") 
 
                         # note that we no longer ensure the order of samples in staged_batch
                         staged_batch = DataProto.concat([staged_out, staged_batch])
