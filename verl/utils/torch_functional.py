@@ -174,6 +174,88 @@ def get_response_mask(response_id: torch.Tensor, eos_token: Union[int, List[int]
     eos_mask = torch.isin(response_id, torch.tensor(eos_token, device=response_id.device)).int()
     return (eos_mask.cumsum(dim=1) - eos_mask).eq(0).to(dtype)
 
+def right_align_segments(attention_mask: torch.Tensor, *sequences: torch.Tensor):
+    """
+    Right-align active segments from multiple sequence tensors based on a shared attention mask.
+
+    Args:
+        attention_mask (torch.Tensor): Binary tensor of shape (b, s) where 1s indicate
+            the active segment. The 1s in each row must form a continuous block.
+        *sequences (torch.Tensor): Variable number of input tensors, each of shape (b, s)
+            containing arbitrary values to be extracted and right-aligned.
+
+    Returns:
+        torch.Tensor or tuple of torch.Tensor: If single sequence provided, returns single
+            tensor of shape (b, s). If multiple sequences provided, returns tuple of tensors,
+            each of shape (b, s) with extracted segments right-aligned and zero-padded on the left.
+
+    Example:
+        >>> import torch
+        >>> attention_mask = torch.tensor([
+        ...     [0, 0, 1, 1, 1, 0],
+        ...     [0, 1, 1, 1, 1, 0],
+        ...     [0, 1, 1, 0, 0, 0]
+        ... ])
+        >>> sequence1 = torch.tensor([
+        ...     [1, 2, 3, 4, 5, 6],
+        ...     [6, 5, 4, 3, 2, 1],
+        ...     [1, 1, 2, 2, 3, 3]
+        ... ])
+        >>> sequence2 = torch.tensor([
+        ...     [10, 20, 30, 40, 50, 60],
+        ...     [60, 50, 40, 30, 20, 10],
+        ...     [11, 12, 13, 14, 15, 16]
+        ... ])
+        >>> result1, result2 = right_align_segments(attention_mask, sequence1, sequence2)
+        >>> print(result1)
+        tensor([[0, 0, 0, 3, 4, 5],
+                [0, 0, 5, 4, 3, 2],
+                [0, 0, 0, 0, 1, 2]])
+        >>> print(result2)
+        tensor([[0, 0, 0, 30, 40, 50],
+                [0, 0, 50, 40, 30, 20],
+                [0, 0, 0, 0, 12, 13]])
+
+        Single sequence example:
+        >>> result = right_align_segments(attention_mask, sequence1)
+        >>> print(result)
+        tensor([[0, 0, 0, 3, 4, 5],
+                [0, 0, 5, 4, 3, 2],
+                [0, 0, 0, 0, 1, 2]])
+    """
+    b, s = attention_mask.shape
+
+    # Validate that all sequences have the same shape as attention_mask
+    for i, sequence in enumerate(sequences):
+        if sequence.shape != attention_mask.shape:
+            raise ValueError(f"Sequence {i} shape {sequence.shape} doesn't match attention_mask shape {attention_mask.shape}")
+
+    # Step 1: Get lengths of each segment
+    lengths = attention_mask.sum(dim=1)  # (b,)
+
+    # Step 2: Create batch indices for all valid positions
+    valid_mask = attention_mask.bool()
+    batch_idx, seq_idx = torch.where(valid_mask)
+
+    # Step 3: Calculate relative positions within each segment
+    # Use cumsum to get position within each row's segment
+    cumsum_mask = torch.cumsum(attention_mask, dim=1)
+    relative_pos = cumsum_mask[valid_mask] - 1  # 0-indexed positions within segments
+
+    # Step 4: Calculate target positions (right-aligned)
+    start_pos = s - lengths[batch_idx]  # Starting position for right alignment
+    target_pos = start_pos + relative_pos
+
+    # Step 5: Process all sequences
+    results = []
+    for sequence in sequences:
+        out = torch.zeros_like(sequence)
+        out[batch_idx, target_pos] = sequence[batch_idx, seq_idx]
+        results.append(out)
+
+    # Return single tensor if only one sequence, otherwise return tuple
+    return results[0] if len(results) == 1 else tuple(results)
+
 
 def compute_grad_norm(model: nn.Module):
     total_grad_square = 0
