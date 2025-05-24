@@ -926,7 +926,29 @@ class RayPPOTrainer:
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
 
                         partial_batch.non_tensor_batch["age"] += 1
-                        # to concatenate the responses in partial batch back to prompts
+                        # concatenate the responses in partial batch back to prompts. see `right_align_segments` for comments
+                        attention_mask = partial_batch.batch["attention_mask"]
+
+                        b, s = attention_mask.shape
+                        new_prompt_length = attention_mask.sum(dim=1)
+                        original_max_prompt_length = self.config.data.max_prompt_length
+                        max_prompt_length = new_prompt_length.max().item()
+                        assert max_prompt_length <= original_max_prompt_length, f"max_prompt_length {max_prompt_length} exceeds original max_prompt_length {original_max_prompt_length}"
+
+                        valid_mask = attention_mask.bool()
+                        batch_idx, seq_idx = torch.where(valid_mask)
+                        target_pos = s - new_prompt_length[batch_idx] + torch.cumsum(attention_mask, dim=1)[valid_mask] - 1
+
+                        for key in ("input_ids", "attention_mask", "position_ids"):
+                            tmp = torch.zeros_like(partial_batch.batch[key])
+                            tmp[batch_idx, target_pos] = partial_batch.batch[key][batch_idx, seq_idx]
+                            partial_batch.batch[key] = tmp
+                        for key in ("raw_prompt_ids",):
+                            tmp = np.zeros_like(partial_batch.non_tensor_batch[key])
+                            tmp[batch_idx.numpy(), target_pos.numpy()] = partial_batch.non_tensor_batch[key][batch_idx.numpy(), seq_idx.numpy()]
+                            partial_batch.non_tensor_batch[key] = tmp
+                        for key in ("prompts", "responses"):
+                            partial_batch.batch.pop(key)
 
                         # note that we no longer ensure the order of samples in staged_batch
                         staged_batch = DataProto.concat([staged_out, staged_batch])
