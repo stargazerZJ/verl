@@ -921,7 +921,7 @@ class RayPPOTrainer:
                     with _timer("filter", timing_raw):
                         batch = batch.union(gen_batch_output)
 
-                        finished_mask = batch.non_tensor_batch.pop("finished_mask")
+                        finished_mask = batch.non_tensor_batch.pop("finished")
                         finished_mask = (batch.non_tensor_batch["age"] == max_age) | finished_mask
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
 
