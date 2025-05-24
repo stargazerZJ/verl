@@ -206,7 +206,7 @@ class DataProto:
     """
 
     batch: TensorDict = None
-    non_tensor_batch: Dict = field(default_factory=dict)
+    non_tensor_batch: Dict[str, np.ndarray] = field(default_factory=dict)
     meta_info: Dict = field(default_factory=dict)
 
     def __post_init__(self):
