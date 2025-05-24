@@ -942,7 +942,8 @@ class RayPPOTrainer:
 
                             for key in ("input_ids", "attention_mask", "position_ids"):
                                 # to process the padding tokens
-                                tmp = torch.zeros_like(partial_batch.batch[key])
+                                tmp = torch.zeros_like(partial_batch.batch[key]) if key != "input_ids" \
+                                    else torch.full_like(partial_batch.batch[key], self.tokenizer.pad_token_id)
                                 tmp[batch_idx, target_pos] = partial_batch.batch[key][batch_idx, seq_idx]
                                 partial_batch.batch[key] = tmp[:, (s - max_prompt_length):]
                             for key in ("raw_prompt_ids",):
