@@ -1,6 +1,7 @@
 # MODEL_PATH=Qwen/Qwen2.5-Math-1.5B
 export RAY_DEBUG_POST_MORTEM=1
 export HYDRA_FULL_ERROR=1
+export VERL_AUTO_PADDING=1
 MODEL_PATH=Qwen/Qwen3-0.6B-Base
 export WANDB_RUN_NAME=$(git rev-parse HEAD | cut -c1-7)
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo --config-path=config \

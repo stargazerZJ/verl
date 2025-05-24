@@ -1045,13 +1045,16 @@ class RayPPOTrainer:
                 batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                 batch.non_tensor_batch["age"] = np.ones(len(batch.batch), dtype=int)
                 batch.non_tensor_batch["finished"] = np.zeros(len(batch.batch), dtype=int)
-                
+                if "raw_prompt_ids" in batch.non_tensor_batch:
+                    batch.non_tensor_batch.pop("raw_prompt_ids")
                 if(len(partial_batch) > 0):
                     batch = DataProto.concat([batch, partial_batch])
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
                 
-                non_tensor_batch_keys_to_pop = ["raw_prompt_ids","age","finished"]
+                non_tensor_batch_keys_to_pop = ["age","finished"]
+                if "raw_prompt_ids" in batch.non_tensor_batch:
+                    non_tensor_batch_keys_to_pop.append("raw_prompt_ids")
                 if "original_prompt_length" in batch.non_tensor_batch:
                     non_tensor_batch_keys_to_pop.append("original_prompt_length")
                 if "multi_modal_inputs" in batch.non_tensor_batch:
