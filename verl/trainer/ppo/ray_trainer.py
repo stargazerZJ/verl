@@ -879,8 +879,8 @@ class RayPPOTrainer:
         self.global_steps += 1
         last_val_metrics = None
 
-        partial_batch = DataProto.from_single_dict()    # samples whose rollout is not finished yet
-        staged_batch = DataProto.from_single_dict()     # samples whose rollout has been finished but not yet trained on
+        partial_batch = DataProto.from_single_dict({})  # samples whose rollout is not finished yet
+        staged_batch = DataProto.from_single_dict({})   # samples whose rollout has been finished but not yet trained on
         max_age = 2                                     # max rounds of rollout before the prompt is forced finished
 
         for epoch in range(self.config.trainer.total_epochs):
@@ -922,13 +922,13 @@ class RayPPOTrainer:
                         batch = batch.union(gen_batch_output)
 
                         finished_mask = batch.non_tensor_batch.pop("finished_mask")
-                        finished_mask = np.logical_or(batch.non_tensor_batch["age"] == max_age, finished_mask)
+                        finished_mask = (batch.non_tensor_batch["age"] == max_age) | finished_mask
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
 
                         partial_batch.non_tensor_batch["age"] += 1
+
                         # concatenate the responses in partial batch back to prompts. see `right_align_segments` for comments
                         attention_mask = partial_batch.batch["attention_mask"]
-
                         b, s = attention_mask.shape
                         new_prompt_length = attention_mask.sum(dim=1)
                         original_max_prompt_length = self.config.data.max_prompt_length
@@ -940,13 +940,14 @@ class RayPPOTrainer:
                         target_pos = s - new_prompt_length[batch_idx] + torch.cumsum(attention_mask, dim=1)[valid_mask] - 1
 
                         for key in ("input_ids", "attention_mask", "position_ids"):
+                            # to process the padding tokens
                             tmp = torch.zeros_like(partial_batch.batch[key])
                             tmp[batch_idx, target_pos] = partial_batch.batch[key][batch_idx, seq_idx]
-                            partial_batch.batch[key] = tmp
+                            partial_batch.batch[key] = tmp[:, (s - max_prompt_length):]
                         for key in ("raw_prompt_ids",):
                             tmp = np.zeros_like(partial_batch.non_tensor_batch[key])
                             tmp[batch_idx.numpy(), target_pos.numpy()] = partial_batch.non_tensor_batch[key][batch_idx.numpy(), seq_idx.numpy()]
-                            partial_batch.non_tensor_batch[key] = tmp
+                            partial_batch.non_tensor_batch[key] = tmp[:, (s - max_prompt_length):]
                         for key in ("prompts", "responses"):
                             partial_batch.batch.pop(key)
 
