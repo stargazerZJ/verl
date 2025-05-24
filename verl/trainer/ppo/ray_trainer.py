@@ -950,8 +950,10 @@ class RayPPOTrainer:
                                 tmp = np.zeros_like(partial_batch.non_tensor_batch[key])
                                 tmp[batch_idx.numpy(), target_pos.numpy()] = partial_batch.non_tensor_batch[key][batch_idx.numpy(), seq_idx.numpy()]
                                 partial_batch.non_tensor_batch[key] = tmp[:, (s - max_prompt_length):]
-                        for key in ("prompts", "responses"):
-                            partial_batch.batch.pop(key)
+                            for key in ("prompts", "responses"):
+                                partial_batch.batch.pop(key)
+                        else:
+                            partial_batch = DataProto()
 
                         # note that we no longer ensure the order of samples in staged_batch
                         staged_batch = DataProto.concat([staged_out, staged_batch])
