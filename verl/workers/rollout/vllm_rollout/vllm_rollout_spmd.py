@@ -36,7 +36,7 @@ import torch
 import torch.distributed
 from omegaconf import DictConfig
 from tensordict import TensorDict
-from vllm import LLM, SamplingParams, CompletionOutput
+from vllm import LLM, SamplingParams, RequestOutput
 from vllm.distributed import parallel_state as vllm_ps
 from vllm.worker.worker_base import WorkerWrapperBase
 
@@ -257,7 +257,7 @@ class vLLMRollout(BaseRollout):
 
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
-            outputs = self.inference_engine.generate(
+            outputs : list[RequestOutput] = self.inference_engine.generate(
                 prompts=vllm_inputs,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
                 use_tqdm=False,
@@ -269,10 +269,9 @@ class vLLMRollout(BaseRollout):
             response = []
             finished = []
             for output in outputs:
-                for sample_id in range(len(output.outputs)):
-                    completion : CompletionOutput = output.outputs[sample_id]
+                for completion in output.outputs:
                     response.append(completion.token_ids)
-                    finished.append(completion.finished())
+                    finished.append(completion.finish_reason != "length")
             non_tensor_batch["finished"] = np.array(finished)
 
             response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
