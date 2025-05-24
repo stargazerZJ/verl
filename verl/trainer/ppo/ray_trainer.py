@@ -946,6 +946,8 @@ class RayPPOTrainer:
                             partial_batch.batch["position_ids"] = attention_mask.cumsum(dim=1) - 1
                             partial_batch.batch["input_ids"] = torch.zeros((b, max_prompt_length), dtype=torch.int64)
                             # input_ids is not actually used in the generation, so we can set it to zeros
+
+                            raw_seq_ids = np.array([[x if x < 151669 else 0 for x in row] for row in raw_seq_ids], dtype=object)
                             partial_batch.non_tensor_batch["raw_prompt_ids"] = raw_seq_ids
 
                             for key in ("prompts", "responses"):
@@ -968,6 +970,8 @@ class RayPPOTrainer:
                             if id2count[uid] == self.config.actor_rollout_ref.rollout.n:
                                 can_train_mask[i] = True
                                 can_train_count += 1
+                            assert id2count[uid] <= self.config.actor_rollout_ref.rollout.n, \
+                                f"batch {i} has {id2count[uid]} responses, which exceeds rollout n {self.config.actor_rollout_ref.rollout.n}"
                             if can_train_count >= max_train_samples:
                                 break
 
