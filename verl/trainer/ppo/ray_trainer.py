@@ -944,7 +944,7 @@ class RayPPOTrainer:
                             attention_mask = attention_mask.cumsum(dim=1)
                             partial_batch.batch["attention_mask"] = attention_mask
                             partial_batch.batch["position_ids"] = attention_mask.cumsum(dim=1) - 1
-                            partial_batch.batch["input_ids"] = torch.tensor((b, max_prompt_length), dtype=torch.int64)
+                            partial_batch.batch["input_ids"] = torch.zeros((b, max_prompt_length), dtype=torch.int64)
                             # input_ids is not actually used in the generation, so we can set it to zeros
                             partial_batch.non_tensor_batch["raw_prompt_ids"] = raw_seq_ids
 
