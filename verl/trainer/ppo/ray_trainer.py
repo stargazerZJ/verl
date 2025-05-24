@@ -971,7 +971,7 @@ class RayPPOTrainer:
                             if can_train_count >= max_train_samples:
                                 break
 
-                        if can_train_count < self.config.data.train_batch_size:
+                        if can_train_count < max_train_samples:
                             print(f"{can_train_count=}. Keep generating...")
                             continue
 
