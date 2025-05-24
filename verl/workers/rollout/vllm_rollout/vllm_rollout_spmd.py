@@ -216,12 +216,14 @@ class vLLMRollout(BaseRollout):
         if batch_size != len(non_tensor_batch["raw_prompt_ids"]):
             raise RuntimeError("vllm sharding manager is not work properly.")
 
+        raw_prompt_ids = non_tensor_batch.pop("raw_prompt_ids")
+
         if "multi_modal_data" in non_tensor_batch:
             vllm_inputs = []
             for raw_prompt_ids, multi_modal_data in zip(non_tensor_batch.pop("raw_prompt_ids"), non_tensor_batch.pop("multi_modal_data")):
                 vllm_inputs.append({"prompt_token_ids": raw_prompt_ids, "multi_modal_data": multi_modal_data})
         else:
-            vllm_inputs = [{"prompt_token_ids": raw_prompt_ids} for raw_prompt_ids in non_tensor_batch.pop("raw_prompt_ids")]
+            vllm_inputs = [{"prompt_token_ids": raw_prompt_ids_} for raw_prompt_ids_ in raw_prompt_ids]
 
         # ensure the type of `prompt_token_ids` passed to vllm is list[int]
         # https://github.com/volcengine/verl/pull/772
@@ -273,6 +275,7 @@ class vLLMRollout(BaseRollout):
                     response.append(completion.token_ids)
                     finished.append(completion.finish_reason != "length")
             non_tensor_batch["finished"] = np.array(finished)
+            non_tensor_batch["raw_seq_ids"] = raw_prompt_ids + np.array(response, dtype=object)
 
             response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
 

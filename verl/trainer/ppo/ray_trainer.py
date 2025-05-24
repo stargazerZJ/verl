@@ -924,32 +924,30 @@ class RayPPOTrainer:
                         finished_mask = batch.non_tensor_batch.pop("finished")
                         finished_mask = (batch.non_tensor_batch["age"] == max_age) | finished_mask
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
+                        staged_out.non_tensor_batch.pop("raw_seq_ids")
 
                         partial_batch.non_tensor_batch["age"] += 1
 
                         if len(partial_batch.batch) > 0:
-                            # concatenate the responses in partial batch back to prompts. see `right_align_segments` for comments
-                            attention_mask = partial_batch.batch["attention_mask"]
-                            b, s = attention_mask.shape
-                            new_prompt_length = attention_mask.sum(dim=1)
-                            original_max_prompt_length = self.config.data.max_prompt_length
-                            max_prompt_length = new_prompt_length.max().item()
-                            assert max_prompt_length <= original_max_prompt_length, f"max_prompt_length {max_prompt_length} exceeds original max_prompt_length {original_max_prompt_length}"
+                            # concatenate the responses in partial batch back to prompts.
+                            b = len(partial_batch.batch)
+                            raw_seq_ids = partial_batch.non_tensor_batch.pop("raw_seq_ids")
+                            new_prompt_lengths = torch.tensor(
+                                [len(seq) for seq in raw_seq_ids]
+                            )
+                            max_prompt_length = self.config.data.max_prompt_length
+                            assert new_prompt_lengths.max() <= max_prompt_length, \
+                                f"max_prompt_length {new_prompt_lengths.max()} exceeds original max_prompt_length {max_prompt_length}"
 
-                            valid_mask = attention_mask.bool()
-                            batch_idx, seq_idx = torch.where(valid_mask)
-                            target_pos = s - new_prompt_length[batch_idx] + torch.cumsum(attention_mask, dim=1)[valid_mask] - 1
+                            attention_mask = torch.zeros((b, max_prompt_length), dtype=torch.int64)
+                            attention_mask[torch.arange(b), max_prompt_length - new_prompt_lengths] = 1
+                            attention_mask = attention_mask.cumsum(dim=1)
+                            partial_batch.batch["attention_mask"] = attention_mask
+                            partial_batch.batch["position_ids"] = attention_mask.cumsum(dim=1) - 1
+                            partial_batch.batch["input_ids"] = torch.tensor((b, max_prompt_length), dtype=torch.int64)
+                            # input_ids is not actually used in the generation, so we can set it to zeros
+                            partial_batch.non_tensor_batch["raw_prompt_ids"] = raw_seq_ids
 
-                            for key in ("input_ids", "attention_mask", "position_ids"):
-                                # to process the padding tokens
-                                tmp = torch.zeros_like(partial_batch.batch[key]) if key != "input_ids" \
-                                    else torch.full_like(partial_batch.batch[key], self.tokenizer.pad_token_id)
-                                tmp[batch_idx, target_pos] = partial_batch.batch[key][batch_idx, seq_idx]
-                                partial_batch.batch[key] = tmp[:, (s - max_prompt_length):]
-                            for key in ("raw_prompt_ids",):
-                                tmp = np.zeros_like(partial_batch.non_tensor_batch[key])
-                                tmp[batch_idx.numpy(), target_pos.numpy()] = partial_batch.non_tensor_batch[key][batch_idx.numpy(), seq_idx.numpy()]
-                                partial_batch.non_tensor_batch[key] = tmp[:, (s - max_prompt_length):]
                             for key in ("prompts", "responses"):
                                 partial_batch.batch.pop(key)
                         else:
