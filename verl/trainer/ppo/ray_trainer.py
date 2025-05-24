@@ -959,26 +959,34 @@ class RayPPOTrainer:
                         staged_batch = DataProto.concat([staged_out, staged_batch])
 
                         # prompts whose number of finished rollout is enough can be trained on
-                        # while filtering, we ensure sample number not larger than self.config.data.train_batch_size
+                        # while filtering, we ensure sample number is divisible by n_gpus_per_node and as large as possible
                         can_train_mask = np.zeros(len(staged_batch.batch), dtype=bool)
                         id2count = defaultdict(int)
-                        can_train_count = 0
-                        max_train_samples = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
+                        n_gpus = self.config.trainer.n_gpus_per_node
+                        required_rollouts = self.config.actor_rollout_ref.rollout.n
+
                         for uid in staged_batch.non_tensor_batch["uid"]:
                             id2count[uid] += 1
-                        for i, uid in enumerate(staged_batch.non_tensor_batch["uid"]):
-                            if id2count[uid] == self.config.actor_rollout_ref.rollout.n:
-                                can_train_mask[i] = True
-                                can_train_count += 1
-                            assert id2count[uid] <= self.config.actor_rollout_ref.rollout.n, \
-                                f"batch {i} has {id2count[uid]} responses, which exceeds rollout n {self.config.actor_rollout_ref.rollout.n}"
-                            if can_train_count >= max_train_samples:
-                                break
+                        assert max(id2count.values()) <= required_rollouts, \
+                            f"max number of responses exceeds rollout n"
 
-                        if can_train_count < max_train_samples:
-                            print(f"{can_train_count=}. Keep generating...")
+                        complete_uids = [uid for uid, count in id2count.items() if count == required_rollouts]
+
+                        total_complete_samples = len(complete_uids) * required_rollouts
+                        max_usable_groups = (total_complete_samples // n_gpus) * n_gpus // required_rollouts
+                        can_train_count = max_usable_groups * required_rollouts
+
+                        if can_train_count == 0:
+                            print(f"No complete uid groups available. Keep generating...")
                             continue
 
+                        selected_uids = set(complete_uids[:max_usable_groups])
+
+                        for i, uid in enumerate(staged_batch.non_tensor_batch["uid"]):
+                            if uid in selected_uids:
+                                can_train_mask[i] = True
+
+                        print(f"{can_train_count=} ")
                         batch, staged_batch = DataProto.split(staged_batch, can_train_mask)
 
                     # to be changed to computing the correct response mask
@@ -1085,6 +1093,7 @@ class RayPPOTrainer:
                     {
                         "training/global_step": self.global_steps,
                         "training/epoch": epoch,
+                        "training/can_train_count": can_train_count,
                     }
                 )
                 # collect metrics
