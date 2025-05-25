@@ -217,8 +217,12 @@ class vLLMRollout(BaseRollout):
             raise RuntimeError("vllm sharding manager is not work properly.")
 
         raw_prompt_ids = non_tensor_batch.pop("raw_prompt_ids")
-        raw_response_ids = non_tensor_batch.pop("raw_response_ids")
         max_age = 2 # max rounds of rollout before the prompt is forced finished
+        if "raw_response_ids" in non_tensor_batch:
+            raw_response_ids = non_tensor_batch.pop("raw_response_ids")
+        else:
+            raw_response_ids = np.fromiter(([] for _ in range(len(batch_size))), dtype=object)
+
 
         if "multi_modal_data" in non_tensor_batch:
             vllm_inputs = []
