@@ -1087,53 +1087,26 @@ class RayPPOTrainer:
                         # 处理partial_batch，将responses拼接到prompt用于下一轮生成
                         if len(partial_batch) > 0 and "responses" in partial_batch.batch:
                             # 获取原始input_ids和已生成的responses
-                            input_ids = partial_batch.batch["input_ids"]
                             responses = partial_batch.batch["responses"]
+                            response_length = responses.size(1)
+                            input_ids = partial_batch.batch["input_ids"]
                             attention_mask = partial_batch.batch["attention_mask"]
                             position_ids = partial_batch.batch["position_ids"]
                             
-                            # 记录原始prompt长度，如果之前没有记录过
-                            if "original_prompt_length" not in partial_batch.non_tensor_batch:
-                                # 记录原始prompt长度
-                                partial_batch.non_tensor_batch["original_prompt_length"] = np.array(
-                                    [input_ids.shape[1]] * len(partial_batch.batch), 
-                                    dtype=np.int32
-                                )
+                            # # 记录原始prompt长度，如果之前没_ids有记录过
+                            # if "original_prompt_length" not in partial_batch.non_tensor_batch:
+                            #     # 记录原始prompt长度
+                            #     partial_batch.non_tensor_batch["original_prompt_length"] = np.array(
+                            #         [input_ids.shape[1]] * len(partial_batch.batch), 
+                            #         dtype=np.int32
+                            #     )
                             
                             # 创建新的input_ids，将responses拼接到原始prompt后
-                            new_input_ids = torch.cat([input_ids, responses], dim=1)
-                            
+                            # new_input_ids = torch.cat([input_ids, responses], dim=1)
+                            new_input_ids = input_ids[:,response_length:]
                             # 更新attention_mask
-                            response_attention_mask = torch.ones_like(responses, dtype=attention_mask.dtype, device=attention_mask.device)
-                            new_attention_mask = torch.cat([attention_mask, response_attention_mask], dim=1)
-                            
-                            # 更新position_ids，由于是partial_batch，response都是没有finish的可以一起处理
-                            last_pos = position_ids[:, -1:].clone() 
-                            response_length = responses.size(1)
-                            delta_pos = torch.arange(1, response_length + 1, device=position_ids.device)
-                            delta_pos = delta_pos.unsqueeze(0).expand(len(partial_batch.batch), -1)
-                            
-                            # 处理特殊情况如qwen2vl mrope
-                            if position_ids.dim() == 3:  
-                                delta_pos = delta_pos.unsqueeze(1).expand(len(partial_batch.batch), position_ids.size(1), -1)
-                                new_pos_ids = last_pos + delta_pos
-                            else:
-                                new_pos_ids = last_pos + delta_pos
-                            
-                            new_position_ids = torch.cat([position_ids, new_pos_ids], dim=1)
-                            
-                            # 获取标准长度限制 - 通常从config或第一批次的大小获取
-                            # 使用最初batch中的input_ids长度作为标准
-                            standard_length = batch_dict["input_ids"].shape[1]
-                            
-                            # 裁剪超出标准长度的部分
-                            if new_input_ids.shape[1] > standard_length:
-                                # 保留最新的标准长度个token
-                                new_input_ids = new_input_ids[:, -standard_length:]
-                                new_attention_mask = new_attention_mask[:, -standard_length:]
-                                new_position_ids = new_position_ids[:, -standard_length:]
-                            
-                            # 更新partial_batch
+                            new_attention_mask = attention_mask[:,response_length:]
+                            new_position_ids = position_ids[:,response_length:]
                             partial_batch.batch["input_ids"] = new_input_ids
                             partial_batch.batch["attention_mask"] = new_attention_mask
                             partial_batch.batch["position_ids"] = new_position_ids
