@@ -221,7 +221,7 @@ class vLLMRollout(BaseRollout):
         if "raw_response_ids" in non_tensor_batch:
             raw_response_ids = non_tensor_batch.pop("raw_response_ids")
         else:
-            raw_response_ids = np.fromiter(([] for _ in range(len(batch_size))), dtype=object)
+            raw_response_ids = np.fromiter(([] for _ in range(batch_size)), dtype=object)
 
 
         if "multi_modal_data" in non_tensor_batch:
