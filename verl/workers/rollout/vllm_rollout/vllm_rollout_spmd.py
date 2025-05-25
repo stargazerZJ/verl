@@ -284,10 +284,11 @@ class vLLMRollout(BaseRollout):
                     response.append(filtered_response)
                     finished.append(completion.finish_reason != "length")
             non_tensor_batch["finished"] = np.array(finished)
-            non_tensor_batch["raw_response_ids"] = np.array(response, dtype=object)
+            response = raw_response_ids + np.from_iter(response, dtype=object)
+            non_tensor_batch["raw_response_ids"] = response
             non_tensor_batch["raw_prompt_ids"] = raw_prompt_ids
 
-            response = pad_2d_list_to_length(raw_response_ids + response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
+            response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
 
             if self.sampling_params.n > 1 and do_sample:
                 idx = _repeat_interleave(idx, self.sampling_params.n)
