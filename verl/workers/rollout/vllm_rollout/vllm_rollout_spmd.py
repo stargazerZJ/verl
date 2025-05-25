@@ -284,7 +284,7 @@ class vLLMRollout(BaseRollout):
                     response.append(filtered_response)
                     finished.append(completion.finish_reason != "length")
             non_tensor_batch["finished"] = np.array(finished)
-            response = raw_response_ids + np.from_iter(response, dtype=object)
+            response = raw_response_ids + np.fromiter(response, dtype=object)
             non_tensor_batch["raw_response_ids"] = response
             non_tensor_batch["raw_prompt_ids"] = raw_prompt_ids
 
