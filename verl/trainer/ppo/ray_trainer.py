@@ -181,6 +181,16 @@ def compute_response_mask(data: DataProto):
     attention_mask = data.batch["attention_mask"]
     return attention_mask[:, -response_length:]
 
+def compute_response_mask_new(data: DataProto):
+    responses = data.batch["responses"]
+    response_length_one = responses.size(1)
+    response_length = data.non_tensor_batch["age"] * response_length_one
+    attention_mask = data.batch["attention_mask"]
+    valid_mask = torch.ones_like(attention_mask)
+    valid_mask[torch.arange(attention_mask.size(0)), attention_mask.size(1) - response_length] = 1
+    valid_mask = torch.cumsum(valid_mask, dim=1)
+    return attention_mask[valid_mask.bool()]
+
 
 def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True):
     # Back-compatible with trainers that do not compute response mask in fit
