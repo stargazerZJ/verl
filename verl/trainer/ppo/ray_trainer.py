@@ -894,7 +894,7 @@ class RayPPOTrainer:
                 # repeat to align with repeated responses in rollout
                 batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                 batch.non_tensor_batch["age"] = np.ones(len(batch.batch), dtype=int)
-                batch.non_tensor_batch["raw_response_ids"] = np.array([[] for _ in range(len(batch.batch))], dtype=object)
+                batch.non_tensor_batch["raw_response_ids"] = np.fromiter(([] for _ in range(len(batch.batch))), dtype=object)
 
                 batch = DataProto.concat([batch, partial_batch])
 
