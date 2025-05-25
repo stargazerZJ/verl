@@ -217,13 +217,16 @@ class vLLMRollout(BaseRollout):
             raise RuntimeError("vllm sharding manager is not work properly.")
 
         raw_prompt_ids = non_tensor_batch.pop("raw_prompt_ids")
+        raw_response_ids = non_tensor_batch.pop("raw_response_ids")
+        max_age = 2 # max rounds of rollout before the prompt is forced finished
 
         if "multi_modal_data" in non_tensor_batch:
             vllm_inputs = []
             for raw_prompt_ids, multi_modal_data in zip(non_tensor_batch.pop("raw_prompt_ids"), non_tensor_batch.pop("multi_modal_data")):
                 vllm_inputs.append({"prompt_token_ids": raw_prompt_ids, "multi_modal_data": multi_modal_data})
         else:
-            vllm_inputs = [{"prompt_token_ids": raw_prompt_ids_} for raw_prompt_ids_ in raw_prompt_ids]
+            vllm_inputs = [{"prompt_token_ids": raw_prompt_ids_ + raw_response_ids_}
+                           for raw_prompt_ids_, raw_response_ids_ in zip(raw_prompt_ids, raw_response_ids)]
 
         # ensure the type of `prompt_token_ids` passed to vllm is list[int]
         # https://github.com/volcengine/verl/pull/772
@@ -255,6 +258,7 @@ class vLLMRollout(BaseRollout):
         else:
             kwargs = {
                 "n": 1, # also repeated in ray_trainer
+                "max_tokens" : self.config.response_length // max_age,
             }
 
         # users can customize different sampling_params at different run
@@ -272,12 +276,14 @@ class vLLMRollout(BaseRollout):
             finished = []
             for output in outputs:
                 for completion in output.outputs:
-                    response.append(completion.token_ids)
+                    filtered_response = [id if id < 151669 else 0 for id in completion.token_ids]
+                    response.append(filtered_response)
                     finished.append(completion.finish_reason != "length")
             non_tensor_batch["finished"] = np.array(finished)
-            non_tensor_batch["raw_seq_ids"] = raw_prompt_ids + np.array(response, dtype=object)
+            non_tensor_batch["raw_response_ids"] = np.array(response, dtype=object)
+            non_tensor_batch["raw_prompt_ids"] = raw_prompt_ids
 
-            response = pad_2d_list_to_length(response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
+            response = pad_2d_list_to_length(raw_response_ids + response, self.pad_token_id, max_length=self.config.response_length).to(idx.device)
 
             if self.sampling_params.n > 1 and do_sample:
                 idx = _repeat_interleave(idx, self.sampling_params.n)

@@ -894,12 +894,13 @@ class RayPPOTrainer:
                 # repeat to align with repeated responses in rollout
                 batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                 batch.non_tensor_batch["age"] = np.ones(len(batch.batch), dtype=int)
+                batch.non_tensor_batch["raw_response_ids"] = np.array([[] for _ in range(len(batch.batch))], dtype=object)
 
                 batch = DataProto.concat([batch, partial_batch])
 
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
-                non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
+                non_tensor_batch_keys_to_pop = ["raw_prompt_ids", "raw_response_ids"]
                 if "multi_modal_inputs" in batch.non_tensor_batch:
                     non_tensor_batch_keys_to_pop.extend(["multi_modal_data", "multi_modal_inputs"])
                 if "raw_prompt" in batch.non_tensor_batch:
@@ -924,31 +925,15 @@ class RayPPOTrainer:
                         finished_mask = batch.non_tensor_batch.pop("finished")
                         finished_mask = (batch.non_tensor_batch["age"] == max_age) | finished_mask
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
-                        staged_out.non_tensor_batch.pop("raw_seq_ids")
+                        staged_out.non_tensor_batch.pop("raw_prompt_ids")
+                        staged_out.non_tensor_batch.pop("raw_response_ids")
 
                         partial_batch.non_tensor_batch["age"] += 1
 
                         if len(partial_batch.batch) > 0:
-                            # concatenate the responses in partial batch back to prompts.
-                            b = len(partial_batch.batch)
-                            raw_seq_ids = partial_batch.non_tensor_batch.pop("raw_seq_ids")
-                            new_prompt_lengths = torch.tensor(
-                                [len(seq) for seq in raw_seq_ids]
-                            )
-                            max_prompt_length = self.config.data.max_prompt_length
-                            assert new_prompt_lengths.max() <= max_prompt_length, \
-                                f"max_prompt_length {new_prompt_lengths.max()} exceeds original max_prompt_length {max_prompt_length}"
-
-                            attention_mask = torch.zeros((b, max_prompt_length), dtype=torch.int64)
-                            attention_mask[torch.arange(b), max_prompt_length - new_prompt_lengths] = 1
-                            attention_mask = attention_mask.cumsum(dim=1)
-                            partial_batch.batch["attention_mask"] = attention_mask
-                            partial_batch.batch["position_ids"] = attention_mask.cumsum(dim=1) - 1
-                            partial_batch.batch["input_ids"] = torch.zeros((b, max_prompt_length), dtype=torch.int64)
-                            # input_ids is not actually used in the generation, so we can set it to zeros
-
-                            raw_seq_ids = np.array([[x if x < 151669 else 0 for x in row] for row in raw_seq_ids], dtype=object)
-                            partial_batch.non_tensor_batch["raw_prompt_ids"] = raw_seq_ids
+                            for key in ("input_ids", "attention_mask", "position_ids"):
+                                tmp = partial_batch.batch.pop(key, None)
+                                partial_batch.batch[key] = tmp[:, :self.config.data.max_prompt_length]
 
                             for key in ("prompts", "responses"):
                                 partial_batch.batch.pop(key)
