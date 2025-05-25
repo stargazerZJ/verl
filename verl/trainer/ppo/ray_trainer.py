@@ -952,7 +952,7 @@ class RayPPOTrainer:
 
                         for uid in staged_batch.non_tensor_batch["uid"]:
                             id2count[uid] += 1
-                        assert max(id2count.values()) <= required_rollouts, \
+                        assert not id2count or max(id2count.values()) <= required_rollouts, \
                             f"max number of responses exceeds rollout n"
 
                         complete_uids = [uid for uid, count in id2count.items() if count == required_rollouts]
