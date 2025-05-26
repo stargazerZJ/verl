@@ -87,6 +87,7 @@ class vLLMRollout(BaseRollout):
         self.config = config
         self.max_gen_prompt_length = config.get("max_gen_prompt_length", 2048)
         self.max_gen_response_length = config.get("max_gen_response_length", 512)
+
         assert not (not config.enforce_eager and config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 
         tensor_parallel_size = self.config.get("tensor_model_parallel_size", 1)
@@ -251,6 +252,7 @@ class vLLMRollout(BaseRollout):
                 "top_p": self.config.val_kwargs.top_p,
                 "temperature": self.config.val_kwargs.temperature,
                 "n": 1,  # if validate, already repeat in ray_trainer
+                "max_tokens" : self.config.response_length
             }
         else:
             kwargs = {

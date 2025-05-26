@@ -1025,7 +1025,7 @@ class RayPPOTrainer:
 
         partial_batch = DataProto() # samples whose rollout is not finished yet
         staged_batch = DataProto()  # samples whose rollout has been finished but not yet trained on
-        max_age = 2                 # max rounds of rollout before the prompt is forced finished
+        max_age = 4                 # max rounds of rollout before the prompt is forced finished
 
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
@@ -1090,6 +1090,22 @@ class RayPPOTrainer:
                             responses = partial_batch.batch["responses"]
                             response_length = responses.size(1)
                             input_ids = partial_batch.batch["input_ids"]
+                            def replace_out_of_vocab_ids(input_ids, vocab_size, unk_token_id):
+                                # 创建一个与input_ids相同形状的掩码，标记超出范围的ID
+                                mask = input_ids >= vocab_size
+                                
+                                # 如果有超出范围的ID，打印警告
+                                if mask.any():
+                                    print(f"Warning: Found {mask.sum().item()} token IDs out of vocabulary range, replacing with <unk>")
+                                
+                                # 替换超出范围的ID为unk_token_id
+                                result = input_ids.clone()
+                                result[mask] = unk_token_id
+                                
+                                return result
+                            input_ids = replace_out_of_vocab_ids(input_ids,151657,0) 
+
+                            
                             attention_mask = partial_batch.batch["attention_mask"]
                             position_ids = partial_batch.batch["position_ids"]
                             
@@ -1110,6 +1126,7 @@ class RayPPOTrainer:
                             partial_batch.batch["input_ids"] = new_input_ids
                             partial_batch.batch["attention_mask"] = new_attention_mask
                             partial_batch.batch["position_ids"] = new_position_ids
+                            
                             
                         # 删除已经拼接到input_ids中的responses
                         if "responses" in partial_batch.batch:

@@ -1,5 +1,5 @@
 # MODEL_PATH=Qwen/Qwen2.5-Math-1.5B
-export RAY_DEBUG_POST_MORTEM=1
+# export RAY_DEBUG_POST_MORTEM=1
 export HYDRA_FULL_ERROR=1
 export VERL_AUTO_PADDING=1
 MODEL_PATH=Qwen/Qwen3-0.6B-Base
@@ -12,10 +12,10 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo --config-path=config \
  data.train_batch_size=16 \
  data.max_prompt_length=512 \
  data.max_response_length=1024 \
- +data.max_gen_prompt_length=2048 \
- +data.max_gen_response_length=128 \
- +actor_rollout_ref.rollout.max_gen_prompt_length=2048 \
- +actor_rollout_ref.rollout.max_gen_response_length=128 \
+ +data.max_gen_prompt_length=1536 \
+ +data.max_gen_response_length=256 \
+ +actor_rollout_ref.rollout.max_gen_prompt_length=1536 \
+ +actor_rollout_ref.rollout.max_gen_response_length=256 \
  actor_rollout_ref.model.path=$MODEL_PATH \
  actor_rollout_ref.actor.optim.lr=1e-6 \
  actor_rollout_ref.actor.ppo_mini_batch_size=16 \
