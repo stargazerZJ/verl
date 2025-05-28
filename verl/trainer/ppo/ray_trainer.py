@@ -21,7 +21,6 @@ This trainer supports model-agonistic model initialization with huggingface
 import json
 import os
 import uuid
-from tensordict import TensorDict
 from collections import defaultdict
 from contextlib import contextmanager
 from copy import deepcopy
@@ -35,6 +34,7 @@ import ray
 import torch
 from codetiming import Timer
 from omegaconf import OmegaConf, open_dict
+from tensordict import TensorDict
 from torch.utils.data import Dataset, Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
@@ -42,20 +42,20 @@ from tqdm import tqdm
 from verl import DataProto
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from verl.single_controller.base import Worker
-from verl.single_controller.ray import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
+from verl.single_controller.ray import (RayClassWithInitArgs, RayResourcePool,
+                                        RayWorkerGroup)
 from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.ppo import core_algos
 from verl.trainer.ppo.core_algos import agg_loss
-from verl.trainer.ppo.metric_utils import (
-    compute_data_metrics,
-    compute_throughout_metrics,
-    compute_timing_metrics,
-    process_validation_metrics,
-    reduce_metrics,
-)
+from verl.trainer.ppo.metric_utils import (compute_data_metrics,
+                                           compute_throughout_metrics,
+                                           compute_timing_metrics,
+                                           process_validation_metrics,
+                                           reduce_metrics)
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
-from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
+from verl.utils.seqlen_balancing import (get_seqlen_balanced_partitions,
+                                         log_seqlen_unbalance)
 from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
 from verl.workers.rollout.async_server import AsyncLLMServerManager
@@ -222,6 +222,8 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
     # standard_response_length = responses.shape[1]
     
     # Loop through all samples, process multi-round generation cases
+    assert len(batch.non_tensor_batch["age"]) == len(batch.batch)
+    
     for i in range(len(batch.batch)):
         if i >= len(batch.non_tensor_batch["age"]):
             continue
@@ -287,12 +289,15 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
             
 
             # Create new attention_mask, size is standard_prompt_length + standard_response_length, filled with 0
+            assert standard_prompt_length + standard_response_length == len(full_attention_mask)
             new_full_mask = torch.full((standard_prompt_length + standard_response_length,),
                                         batch.batch["attention_mask"].new_zeros(1)[0], 
                                         dtype=batch.batch["attention_mask"].dtype, 
                                         device=batch.batch["attention_mask"].device)
-            new_full_mask[prompt_start:-response_padding_length] = 1
-            
+            if response_padding_length != 0 :
+                new_full_mask[:-response_padding_length] = full_attention_mask[response_padding_length:]
+            else :
+                new_full_mask = full_attention_mask
             # Update batch
             new_batch["prompts"].append(padded_prompt)
             new_batch["input_ids"].append(torch.concat([padded_prompt, new_responses]))
@@ -320,6 +325,7 @@ def process_multi_round_generation(batch: DataProto, standard_prompt_length: int
         },
         batch_size=len(batch.non_tensor_batch["age"]),
     )
+    # breakpoint()
     
     return DataProto(batch=tmp_batch, non_tensor_batch=batch.non_tensor_batch,meta_info=batch.meta_info)
 
@@ -598,7 +604,8 @@ class RayPPOTrainer:
         if train_sampler is None:
             train_sampler = create_rl_sampler(self.config.data, self.train_dataset)
         if collate_fn is None:
-            from verl.utils.dataset.rl_dataset import collate_fn as default_collate_fn
+            from verl.utils.dataset.rl_dataset import \
+                collate_fn as default_collate_fn
 
             collate_fn = default_collate_fn
 
@@ -1025,8 +1032,8 @@ class RayPPOTrainer:
 
         partial_batch = DataProto() # samples whose rollout is not finished yet
         staged_batch = DataProto()  # samples whose rollout has been finished but not yet trained on
-        max_age = 4                 # max rounds of rollout before the prompt is forced finished
-
+        max_age = 2                 # max rounds of rollout before the prompt is forced finished
+        breakpoint()
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
                 metrics = {}
@@ -1047,8 +1054,10 @@ class RayPPOTrainer:
                 batch.non_tensor_batch["finished"] = np.zeros(len(batch.batch), dtype=int)
                 if "raw_prompt_ids" in batch.non_tensor_batch:
                     batch.non_tensor_batch.pop("raw_prompt_ids")
+                # breakpoint()
                 if(len(partial_batch) > 0):
                     batch = DataProto.concat([batch, partial_batch])
+
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
                 
@@ -1073,11 +1082,11 @@ class RayPPOTrainer:
                 with _timer("step", timing_raw):
                     # generate a batch
                     with _timer("gen", timing_raw):
+                        # breakpoint()
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
 
                     with _timer("filter", timing_raw):
                         batch = batch.union(gen_batch_output)
-
                         # finished_mask = batch.pop(batch_keys=[],non_tensor_batch_keys=["finished"])
                         finished_mask = np.logical_or(batch.non_tensor_batch["age"] == max_age, batch.non_tensor_batch["finished"])
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
@@ -1105,7 +1114,6 @@ class RayPPOTrainer:
                                 return result
                             input_ids = replace_out_of_vocab_ids(input_ids,151657,0) 
 
-                            
                             attention_mask = partial_batch.batch["attention_mask"]
                             position_ids = partial_batch.batch["position_ids"]
                             
@@ -1128,6 +1136,7 @@ class RayPPOTrainer:
                             partial_batch.batch["position_ids"] = new_position_ids
                             
                             
+                            
                         # 删除已经拼接到input_ids中的responses
                         if "responses" in partial_batch.batch:
                             partial_batch.batch.pop("responses")
@@ -1135,7 +1144,8 @@ class RayPPOTrainer:
                             partial_batch.batch.pop("prompts")
                         if "response_mask" in partial_batch.batch:
                             partial_batch.batch.pop("response_mask") 
-
+                        # breakpoint()
+                        
                         # note that we no longer ensure the order of samples in staged_batch
                         staged_batch = DataProto.concat([staged_out, staged_batch])
 
@@ -1157,12 +1167,27 @@ class RayPPOTrainer:
                         if can_train_count < self.config.data.train_batch_size:
                             print(f"{can_train_count=}. Keep generating...")
                             continue
+                        # breakpoint()
+                        
+                        if can_train_count % 2 != 0 :
+                            drop_uid = None
+                            for i, uid in enumerate(staged_batch.non_tensor_batch["uid"]):
+                                if can_train_mask[i] == False:
+                                    continue
+                                if drop_uid == None:
+                                    drop_uid = uid
+                                if uid == drop_uid:
+                                    can_train_mask[i] = False
+                            can_train_count -= 1
 
                         batch, staged_batch = DataProto.split(staged_batch, can_train_mask)
+                        # breakpoint()
+                        
 
                     # to be changed to computing the correct response mask
                     # 应用process_multi_round_generation处理batch
                     batch = process_multi_round_generation(batch,self.max_prompt_length,self.max_response_length,self.tokenizer)
+                    # breakpoint()
 
                     # 计算response_mask
                     batch.batch["response_mask"] = compute_response_mask(batch)
@@ -1231,6 +1256,7 @@ class RayPPOTrainer:
                     # update actor
                     with _timer("update_actor", timing_raw):
                         batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
+                        # breakpoint()
                         actor_output = self.actor_rollout_wg.update_actor(batch)
                     actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                     metrics.update(actor_output_metrics)
