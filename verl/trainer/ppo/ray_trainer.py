@@ -1011,7 +1011,8 @@ class RayPPOTrainer:
                                 tmp = partial_batch.batch.pop(key, None)
                                 partial_batch.batch[key] = tmp[:, :self.config.data.max_prompt_length]
 
-                            for key in ("prompts", "responses"):
+                            for key in ("prompts", "responses", "rollout_log_probs"):
+                                # we don't support rollout_log_probs in this feature branch
                                 partial_batch.batch.pop(key)
                         else:
                             partial_batch = DataProto()
@@ -1038,7 +1039,7 @@ class RayPPOTrainer:
                         can_train_count = max_usable_groups * required_rollouts
 
                         if can_train_count == 0:
-                            print(f"No complete uid groups available. Keep generating...")
+                            print(f"{total_complete_samples=}, no complete uid groups available. Keep generating...")
                             continue
 
                         selected_uids = set(complete_uids[:max_usable_groups])
