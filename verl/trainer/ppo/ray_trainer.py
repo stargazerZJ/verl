@@ -1023,8 +1023,8 @@ class RayPPOTrainer:
                         # while filtering, we ensure sample number is divisible by n_gpus_per_node and as large as possible
                         can_train_mask = np.zeros(len(staged_batch.batch), dtype=bool)
                         id2count = defaultdict(int)
-                        n_gpus = self.config.trainer.n_gpus_per_node
                         required_rollouts = self.config.actor_rollout_ref.rollout.n
+                        divisor = np.lcm(self.config.trainer.n_gpus_per_node, required_rollouts)
 
                         for uid in staged_batch.non_tensor_batch["uid"]:
                             id2count[uid] += 1
