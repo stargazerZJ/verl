@@ -1034,7 +1034,7 @@ class RayPPOTrainer:
                         complete_uids = [uid for uid, count in id2count.items() if count == required_rollouts]
 
                         total_complete_samples = len(complete_uids) * required_rollouts
-                        max_usable_groups = (total_complete_samples // n_gpus) * n_gpus // required_rollouts
+                        max_usable_groups = (total_complete_samples // divisor) * divisor // required_rollouts
                         can_train_count = max_usable_groups * required_rollouts
 
                         if can_train_count == 0:
@@ -1047,7 +1047,7 @@ class RayPPOTrainer:
                             if uid in selected_uids:
                                 can_train_mask[i] = True
 
-                        print(f"{total_complete_samples=} {can_train_count=} ")
+                        print(f"{total_complete_samples=} {can_train_count=}")
                         batch, staged_batch = DataProto.split(staged_batch, can_train_mask)
 
                     batch.batch["response_mask"] = compute_response_mask(batch)
