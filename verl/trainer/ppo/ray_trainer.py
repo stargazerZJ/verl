@@ -1047,7 +1047,7 @@ class RayPPOTrainer:
                             if uid in selected_uids:
                                 can_train_mask[i] = True
 
-                        print(f"{can_train_count=} ")
+                        print(f"{total_complete_samples=} {can_train_count=} ")
                         batch, staged_batch = DataProto.split(staged_batch, can_train_mask)
 
                     batch.batch["response_mask"] = compute_response_mask(batch)
