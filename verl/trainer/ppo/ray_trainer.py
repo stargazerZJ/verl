@@ -1018,7 +1018,7 @@ class RayPPOTrainer:
                             partial_batch = DataProto()
 
                         # note that we no longer ensure the order of samples in staged_batch
-                        staged_batch = DataProto.concat([staged_out, staged_batch])
+                        staged_batch = DataProto.concat([staged_batch, staged_out]) if staged_batch is not None else staged_out
 
                         # prompts whose number of finished rollout is enough can be trained on
                         # while filtering, we ensure sample number is divisible by n_gpus_per_node and as large as possible
