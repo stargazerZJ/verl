@@ -955,9 +955,9 @@ class RayPPOTrainer:
         self.global_steps += 1
         last_val_metrics = None
 
-        partial_batch = DataProto() # samples whose rollout is not finished yet
-        staged_batch = DataProto()  # samples whose rollout has been finished but not yet trained on
-        max_age = 2                 # max rounds of rollout before the prompt is forced finished
+        partial_batch: Optional[DataProto] = None # samples whose rollout is not finished yet
+        staged_batch: Optional[DataProto] = None  # samples whose rollout has been finished but not yet trained on
+        max_age = 2                               # max rounds of rollout before the prompt is forced finished
 
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
@@ -972,7 +972,7 @@ class RayPPOTrainer:
                 batch.non_tensor_batch["age"] = np.ones(len(batch.batch), dtype=int)
                 batch.non_tensor_batch["raw_response_ids"] = np.fromiter(([] for _ in range(len(batch.batch))), dtype=object)
 
-                batch = DataProto.concat([batch, partial_batch])
+                batch = DataProto.concat([partial_batch, batch]) if partial_batch is not None else batch
 
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
