@@ -1053,6 +1053,7 @@ class RayPPOTrainer:
                                 can_train_mask[i] = True
 
                         batch, staged_batch = DataProto.split(staged_batch, can_train_mask)
+                        staged_batch.non_tensor_batch["age"] += 1
 
                     batch.batch["response_mask"] = compute_response_mask(batch)
                     # balance the number of valid tokens on each dp rank.
