@@ -510,7 +510,7 @@ class RayPPOTrainer:
             assert config.algorithm.adv_estimator in [AdvantageEstimator.GRPO], "only GRPO is tested for multi-turn with tool"
 
         # check partial rollout config
-        assert config.data.max_response_length % config.data.partial_rollout_max_split == 0, "max_response_length must be divisible by partial_rollout_max_split"
+        assert config.data.max_response_length % config.algorithm.partial_rollout_max_split == 0, "max_response_length must be divisible by partial_rollout_max_split"
 
         print("[validate_config] All configuration checks passed successfully!")
 
