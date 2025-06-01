@@ -236,7 +236,6 @@ class vLLMRollout(BaseRollout):
             raise RuntimeError("vllm sharding manager is not work properly.")
 
         raw_prompt_ids = non_tensor_batch.pop("raw_prompt_ids")
-        max_age = 2 # max rounds of rollout before the prompt is forced finished
         if "raw_response_ids" in non_tensor_batch:
             raw_response_ids = non_tensor_batch.pop("raw_response_ids")
         else:
@@ -261,6 +260,7 @@ class vLLMRollout(BaseRollout):
 
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
+        max_age = prompts.meta_info.get("partial_rollout_max_age", 1) # max rounds of rollout before the prompt is forced finished
         if not do_sample:
             kwargs = {
                 "best_of": 1,
