@@ -694,9 +694,8 @@ class DataProto:
         """
         batch_lst = []
         for batch in data:
-            if batch.batch is not None:
-                batch_lst.append(batch.batch)
-        new_batch = torch.cat(batch_lst, dim=0) if batch_lst else None
+            batch_lst.append(batch.batch)
+        new_batch = torch.cat(batch_lst, dim=0) if batch_lst[0] is not None else None
 
         non_tensor_batch = list_of_dict_to_dict_of_list(list_of_dict=[d.non_tensor_batch for d in data])
         for key, val in non_tensor_batch.items():
