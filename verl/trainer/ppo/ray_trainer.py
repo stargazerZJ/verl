@@ -393,6 +393,8 @@ class RayPPOTrainer:
         else:
             raise NotImplementedError
 
+        self.enable_partial_rollout: bool = self.config.algorithm.partial_rollout_max_age > 1
+
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
 
@@ -957,7 +959,6 @@ class RayPPOTrainer:
 
         partial_batch: Optional[DataProto] = None # samples whose rollout is not finished yet
         staged_batch: Optional[DataProto] = None  # samples whose rollout has been finished but not yet trained on
-        max_age = 2                               # max rounds of rollout before the prompt is forced finished
 
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
@@ -987,6 +988,7 @@ class RayPPOTrainer:
                     batch_keys=batch_keys_to_pop,
                     non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
                 )
+                gen_batch.meta_info["partial_rollout_max_age"] = self.config.algorithm.partial_rollout_max_age
 
                 is_last_step = self.global_steps >= self.total_training_steps
 
@@ -999,7 +1001,7 @@ class RayPPOTrainer:
                         batch = batch.union(gen_batch_output)
 
                         finished_mask = batch.non_tensor_batch.pop("finished")
-                        finished_mask = (batch.non_tensor_batch["age"] == max_age) | finished_mask
+                        finished_mask = (batch.non_tensor_batch["age"] == self.config.algorithm.partial_rollout_max_age) | finished_mask
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
                         staged_out.non_tensor_batch.pop("raw_prompt_ids")
                         staged_out.non_tensor_batch.pop("raw_response_ids")
@@ -1178,9 +1180,15 @@ class RayPPOTrainer:
                     {
                         "training/global_step": self.global_steps,
                         "training/epoch": epoch,
-                        "training/can_train_count": can_train_count,
                     }
                 )
+                if self.enable_partial_rollout:
+                    metrics.update(
+                        {
+                            "training/can_train_count": can_train_count,
+                            "training/total_complete_samples": total_complete_samples,
+                        }
+                    )
                 # collect metrics
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
