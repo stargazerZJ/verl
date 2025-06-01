@@ -988,7 +988,6 @@ class RayPPOTrainer:
                     batch_keys=batch_keys_to_pop,
                     non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
                 )
-                gen_batch.meta_info["partial_rollout_max_age"] = self.config.algorithm.partial_rollout_max_age
 
                 is_last_step = self.global_steps >= self.total_training_steps
 

@@ -260,7 +260,6 @@ class vLLMRollout(BaseRollout):
 
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
-        max_age = prompts.meta_info.get("partial_rollout_max_age", 1) # max rounds of rollout before the prompt is forced finished
         if not do_sample:
             kwargs = {
                 "best_of": 1,
@@ -281,7 +280,7 @@ class vLLMRollout(BaseRollout):
         else:
             kwargs = {
                 "n": 1, # also repeated in ray_trainer
-                "max_tokens" : self.config.response_length // max_age,
+                "max_tokens" : self.config.response_length // self.config.partial_rollout_max_age,
             }
 
         # users can customize different sampling_params at different run

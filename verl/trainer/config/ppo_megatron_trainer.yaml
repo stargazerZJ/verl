@@ -129,6 +129,7 @@ actor_rollout_ref:
     top_p: 1
     prompt_length: ${data.max_prompt_length}  # for xperf_gpt
     response_length: ${data.max_response_length}
+    partial_rollout_max_age: ${algorithm.partial_rollout_max_age}
     # for vllm rollout
     dtype: bfloat16 # should align with FSDP
     gpu_memory_utilization: 0.5
