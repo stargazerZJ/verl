@@ -280,7 +280,7 @@ class vLLMRollout(BaseRollout):
         else:
             kwargs = {
                 "n": 1, # also repeated in ray_trainer
-                "max_tokens" : self.config.response_length // self.config.partial_rollout_max_age,
+                "max_tokens" : self.config.response_length // self.config.partial_rollout_max_split,
             }
 
         # users can customize different sampling_params at different run

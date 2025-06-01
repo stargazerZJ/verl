@@ -393,7 +393,7 @@ class RayPPOTrainer:
         else:
             raise NotImplementedError
 
-        self.enable_partial_rollout: bool = self.config.algorithm.partial_rollout_max_age > 1
+        self.enable_partial_rollout: bool = self.config.algorithm.partial_rollout_max_split > 1
 
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
@@ -510,7 +510,7 @@ class RayPPOTrainer:
             assert config.algorithm.adv_estimator in [AdvantageEstimator.GRPO], "only GRPO is tested for multi-turn with tool"
 
         # check partial rollout config
-        assert config.data.max_response_length % config.data.partial_rollout_max_age == 0, "max_response_length must be divisible by partial_rollout_max_age"
+        assert config.data.max_response_length % config.data.partial_rollout_max_split == 0, "max_response_length must be divisible by partial_rollout_max_split"
 
         print("[validate_config] All configuration checks passed successfully!")
 
@@ -1003,7 +1003,7 @@ class RayPPOTrainer:
                         batch = batch.union(gen_batch_output)
 
                         finished_mask = batch.non_tensor_batch.pop("finished")
-                        finished_mask = (batch.non_tensor_batch["age"] == self.config.algorithm.partial_rollout_max_age) | finished_mask
+                        finished_mask = (batch.non_tensor_batch["age"] == self.config.algorithm.partial_rollout_max_split) | finished_mask
                         staged_out, partial_batch = DataProto.split(batch, finished_mask)
                         staged_out.non_tensor_batch.pop("raw_prompt_ids")
                         staged_out.non_tensor_batch.pop("raw_response_ids")
